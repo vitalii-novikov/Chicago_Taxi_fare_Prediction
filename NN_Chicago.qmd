@@ -1,0 +1,310 @@
+---
+title: "NN_for_taxi_fare_Chicago"
+author: "Group B2"
+format: 
+  html: 
+    code-link: true
+    code-tools: true
+    toc: true
+    toc-location: right
+    df-print: paged
+  revealjs:
+    output-ext: "Group-B2-PRESENTATION.html"
+    toc: false
+    code-line-numbers: false
+    echo: true
+    scrollable: true
+    code-link: true
+    code-tools: true
+    df-print: paged
+    slide-number: true
+execute: 
+  cache: false
+  warning: false
+---
+
+
+
+## Data preparation 
+
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(readr)
+```
+
+
+## aquire dataset using json
+
+
+```{r}
+need_to_parse = FALSE
+
+if (need_to_parse) {
+  base_url <- "https://data.cityofchicago.org/resource/ajtu-isnz.json"
+  limit <- 49000
+  offset <- 0
+  chunk_list <- list()
+  finished <- FALSE
+  
+  where_clause <- URLencode("trip_start_timestamp >= '2024-01-01T00:00:00' AND trip_start_timestamp < '2025-01-01T00:00:00'", reserved = TRUE)
+  
+  cols_to_drop <- c(
+    "trip_id", "taxi_id",
+    "pickup_centroid_location", 
+    "dropoff_centroid_location"
+  )
+  
+  clean_chunk <- function(df) {
+    df <- df %>%
+      select(-any_of(cols_to_drop)) %>% 
+      mutate(
+        trip_seconds = as.numeric(trip_seconds),
+        trip_miles = as.numeric(trip_miles),
+        fare = as.numeric(fare),
+        tips = as.numeric(tips),
+        tolls = as.numeric(tolls),
+        extras = as.numeric(extras),
+        trip_total = as.numeric(trip_total),
+        pickup_community_area = as.integer(pickup_community_area),
+        dropoff_community_area = as.integer(dropoff_community_area),
+        trip_start_timestamp = ymd_hms(trip_start_timestamp),
+        trip_end_timestamp = ymd_hms(trip_end_timestamp)
+      )
+    return(df)
+  }
+  
+  while (!finished) {
+    raw_url <- paste0(
+      base_url,
+      "?$where=", where_clause,
+      "&$limit=", limit,
+      "&$offset=", offset
+    )
+    
+    url <- URLencode(raw_url)
+    resp <- GET(url)
+    
+    if (status_code(resp) != 200) {
+      stop("Warning: ", status_code(resp))
+    }
+    
+    data_chunk <- fromJSON(rawToChar(resp$content))
+    
+    if (length(data_chunk) == 0) {
+      finished <- TRUE
+      cat("---Completed---\n")
+      break
+    }
+  
+    clean_data <- clean_chunk(data_chunk)
+    chunk_list[[length(chunk_list) + 1]] <- clean_data
+    
+    cat("Rows acquired: ", offset + nrow(clean_data), "\n")
+    offset <- offset + limit
+  }
+
+}
+```
+
+```{r}
+need_to_save = FALSE
+
+if (need_to_save) {
+  taxi_data_2024 <- bind_rows(chunk_list)
+  write.csv(taxi_data_2024, "chicago_taxi_2024.csv", row.names = FALSE)
+}
+```
+
+## read saved dataset
+
+```{r}
+taxi_data_half2024 <- readr::read_csv("chicago_taxi_half2024.csv")
+```
+## explore dataset
+
+```{r}
+taxi_data_half2024 %>% head()
+```
+
+
+```{r}
+numeric_columns <- c("trip_start_timestamp",
+                              "trip_end_timestamp",
+                              "trip_seconds",
+                              "trip_miles",
+                              "fare",
+                              "tips",
+                              "tolls",
+                              "extras",
+                              "trip_total",
+                              "pickup_community_area",
+                              "dropoff_community_area")
+taxi_data_half2024 %>% select(all_of(numeric_columns)) %>% summary()
+```
+## Filter zero values
+
+```{r}
+df <- taxi_data_half2024 %>% 
+  drop_na(trip_seconds, trip_miles, fare) %>%
+  filter(trip_seconds > 0, trip_miles > 0, fare > 0)
+```
+
+
+```{r}
+par(mfrow = c(1, 3))
+boxplot(df$trip_seconds, main = "Trip Seconds", col = "lightblue")
+boxplot(df$trip_miles, main = "Trip Miles", col = "lightgreen")
+boxplot(df$fare, main = "Fare", col = "lightcoral")
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+remove_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR_val
+  upper <- Q3 + 1.5 * IQR_val
+  return(x >= lower & x <= upper)
+}
+
+df <- df %>%
+  filter(
+    remove_outliers(trip_seconds),
+    remove_outliers(trip_miles),
+    remove_outliers(fare)
+  )
+
+```
+
+
+
+```{r}
+par(mfrow = c(1, 3))
+boxplot(df$trip_seconds, main = "Trip Seconds", col = "lightblue")
+boxplot(df$trip_miles, main = "Trip Miles", col = "lightgreen")
+boxplot(df$fare, main = "Fare", col = "lightcoral")
+par(mfrow = c(1, 1))
+```
+
+## Create Proxy metrics
+
+### [proxy] Average Speed
+
+```{r}
+df <- df %>% mutate(
+  speed_proxy = (trip_miles / 1.60934) / (trip_seconds/60/60)
+)
+df %>% select(speed_proxy, trip_miles, trip_seconds, fare) %>% summary()
+
+```
+
+
+```{r}
+par(mfrow = c(1, 2))
+boxplot(df$speed_proxy, main = "Speed_proxy", col = "lightgray")
+boxplot(filter(df, trip_miles > 0.5 )$speed_proxy, main = "Speed for miles>0.5", col = "lightgray")
+boxplot(filter(df, remove_outliers(speed_proxy))$speed_proxy, main = "Speed cutted", col = "lightgray")
+par(mfrow = c(1, 1))
+```
+
+Reasonable to use remove_outliers for speed_proxy.
+
+
+
+```{r}
+df <- df %>%
+  filter(remove_outliers(speed_proxy))
+nrow(df)
+```
+
+### [proxy] Change community area flag 
+
+- "unavaliable" if one of values is NA (i.e. we cannot define if the area was changed during trip)
+- "changed" if the community area of destination differs to the community area of strarting position
+- "single-area" if not differs
+
+```{r}
+df <- df %>%
+  mutate(
+    change_ca_flag = case_when(
+      is.na(pickup_community_area) ~ "unavailable",
+      is.na(dropoff_community_area) ~ "unavailable",
+      pickup_community_area == dropoff_community_area ~ "single-area",
+      pickup_community_area != dropoff_community_area ~ "changed"
+    )
+  ) 
+df %>% select(change_ca_flag) %>% table() %>% pie()
+```
+
+### Day part & weekday
+
+```{r}
+df <- df %>%
+  mutate(
+    hour = hour(trip_start_timestamp),
+    day_part = case_when(
+      hour >= 0 & hour < 6   ~ "night",
+      hour >= 6 & hour < 12  ~ "morning",
+      hour >= 12 & hour < 18 ~ "midday",
+      hour >= 18 & hour <= 23 ~ "evening"
+    ),
+    day_part = factor(
+      day_part,
+      levels = c("night", "morning", "midday", "evening"),
+      ordered = TRUE
+    ),
+
+    weekday = case_when(
+      wday(trip_start_timestamp, week_start = 1) == 1 ~ "Mon",
+      wday(trip_start_timestamp, week_start = 1) == 2 ~ "Tue",
+      wday(trip_start_timestamp, week_start = 1) == 3 ~ "Wed",
+      wday(trip_start_timestamp, week_start = 1) == 4 ~ "Thu",
+      wday(trip_start_timestamp, week_start = 1) == 5 ~ "Fri",
+      wday(trip_start_timestamp, week_start = 1) == 6 ~ "Sat",
+      wday(trip_start_timestamp, week_start = 1) == 7 ~ "Sun"
+    ),
+    weekday = factor(
+      weekday,
+      levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+      ordered = TRUE
+    )
+  ) 
+#par(mfrow = c(3, 1))
+df %>% select(hour) %>% table() %>% barplot()
+df %>% select(day_part) %>% table() %>% barplot()
+df %>% select(weekday) %>% table() %>% barplot()
+#par(mfrow = c(1, 1))
+```
+
+
+## Data summary
+
+```{r}
+if(interactive()){
+  # NOTE open in Viewer Pan
+  summarytools::dfSummary(df) |> summarytools::view() 
+} else {
+  summarytools::dfSummary(df) |> print(method = "render")
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
