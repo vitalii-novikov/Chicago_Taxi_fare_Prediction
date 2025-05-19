@@ -35,10 +35,126 @@ library(tidyr)
 library(lubridate)
 library(ggplot2)
 library(readr)
+library(caret)
+```
+
+## [NEW] Load each month 2024-2025
+
+```{r}
+need_to_parse <- FALSE
+years <- c(2024, 2025)
+limit <- 49000          
+base_url <- "https://data.cityofchicago.org/resource/ajtu-isnz.json"
+
+cols_to_drop <- c(
+  "trip_id", "taxi_id",
+  "pickup_centroid_location",
+  "dropoff_centroid_location"
+)
+
+clean_chunk <- function(df) {
+  df <- df %>%
+    select(-any_of(cols_to_drop)) %>%
+    mutate(
+      trip_seconds = as.numeric(trip_seconds),
+      trip_miles = as.numeric(trip_miles),
+      fare = as.numeric(fare),
+      tips = as.numeric(tips),
+      tolls = as.numeric(tolls),
+      extras = as.numeric(extras),
+      trip_total = as.numeric(trip_total),
+      pickup_community_area = as.integer(pickup_community_area),
+      dropoff_community_area = as.integer(dropoff_community_area),
+      trip_start_timestamp = ymd_hms(trip_start_timestamp),
+      trip_end_timestamp = ymd_hms(trip_end_timestamp)
+    )
+  return(df)
+}
+
+if (need_to_parse) {
+  for (year in years) {
+    for (month in 1:12) {
+      start_date <- sprintf("%04d-%02d-01T00:00:00", year, month)
+      end_date <- if (month == 12) {
+        sprintf("%04d-01-01T00:00:00", year + 1)
+      } else {
+        sprintf("%04d-%02d-01T00:00:00", year, month + 1)
+      }
+
+      where_clause <- URLencode(
+        paste0("trip_start_timestamp >= '", start_date, "' AND trip_start_timestamp < '", end_date, "'"),
+        reserved = TRUE
+      )
+
+      offset <- 0
+      month_chunks <- list()
+      finished <- FALSE
+
+      cat("Downloading:", year, month, "\n")
+
+      while (!finished) {
+        raw_url <- paste0(
+          base_url,
+          "?$where=", where_clause,
+          "&$limit=", limit,
+          "&$offset=", offset
+        )
+
+        url <- URLencode(raw_url)
+        resp <- GET(url)
+
+        if (status_code(resp) != 200) {
+          warning("API error at ", year, "-", month, " offset ", offset)
+          break
+        }
+
+        data_chunk <- fromJSON(rawToChar(resp$content))
+
+        if (length(data_chunk) == 0) {
+          finished <- TRUE
+          break
+        }
+
+        clean_data <- clean_chunk(data_chunk)
+        month_chunks[[length(month_chunks) + 1]] <- clean_data
+
+        cat("  Rows downloaded:", offset + nrow(clean_data), "\n")
+        offset <- offset + limit
+      }
+
+      if (length(month_chunks) > 0) {
+        monthly_data <- bind_rows(month_chunks)
+        file_name <- sprintf("data/chicago_taxi_%04d_%02d.csv", year, month)
+        write_csv(monthly_data, file_name)
+        cat("  ✔ Saved:", file_name, "- Total rows:", nrow(monthly_data), "\n")
+      } else {
+        cat("  ⚠ No data for:", year, month, "\n")
+      }
+    }
+  }
+}
+
 ```
 
 
-## aquire dataset using json
+## [NEW] Load data
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+
+
+files <- list.files("data", pattern = "^chicago_taxi_\\d{4}_\\d{2}\\.csv$", full.names = TRUE)
+
+taxi_data <- files %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE))
+
+glimpse(taxi_data)
+```
+
+
+## [OLD] aquire dataset using json
 
 
 ```{r}
@@ -120,15 +236,17 @@ if (need_to_save) {
 }
 ```
 
-## read saved dataset
+
+## [OLD] read saved dataset
 
 ```{r}
-taxi_data_half2024 <- readr::read_csv("chicago_taxi_half2024.csv")
+chicago_taxi_2024 <- readr::read_csv("chicago_taxi_half2024.csv")
 ```
+
 ## explore dataset
 
 ```{r}
-taxi_data_half2024 %>% head()
+taxi_data %>% head()
 ```
 
 
@@ -144,12 +262,12 @@ numeric_columns <- c("trip_start_timestamp",
                               "trip_total",
                               "pickup_community_area",
                               "dropoff_community_area")
-taxi_data_half2024 %>% select(all_of(numeric_columns)) %>% summary()
+taxi_data %>% select(all_of(numeric_columns)) %>% summary()
 ```
 ## Filter zero values
 
 ```{r}
-df <- taxi_data_half2024 %>% 
+df <- taxi_data %>% 
   drop_na(trip_seconds, trip_miles, fare) %>%
   filter(trip_seconds > 0, trip_miles > 0, fare > 0)
 ```
@@ -238,7 +356,8 @@ df <- df %>%
       is.na(dropoff_community_area) ~ "unavailable",
       pickup_community_area == dropoff_community_area ~ "single-area",
       pickup_community_area != dropoff_community_area ~ "changed"
-    )
+    ),
+    change_ca_flag = factor(change_ca_flag)
   ) 
 df %>% select(change_ca_flag) %>% table() %>% pie()
 ```
@@ -296,9 +415,25 @@ if(interactive()){
 ```
 
 
+### feature engineering
+
+```{r}
+mainEffects <- caret::dummyVars(~weekday, df, sep = ".")
+#caret::class2ind(mainEffects)
+predict(mainEffects, df["weekday"]) %>% head()
+```
 
 
 
+```{r}
+nn_df <- cbind(df,
+    class2ind(df$weekday), 
+    class2ind(df$change_ca_flag),
+    class2ind(df$day_part)) %>% 
+  select(fare, trip_seconds,trip_miles, speed_proxy,26:31,33:34,36:38)
+
+nn_df %>% skimr::skim()
+```
 
 
 
