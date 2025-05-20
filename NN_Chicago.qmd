@@ -28,15 +28,23 @@ execute:
 ## Data preparation 
 
 ```{r}
-library(httr)
-library(jsonlite)
-library(dplyr)
-library(tidyr)
-library(lubridate)
-library(ggplot2)
-library(readr)
-library(caret)
-library(purrr)
+ensureLibrary <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+ensureLibrary("httr")
+ensureLibrary("jsonlite")
+ensureLibrary("dplyr")
+ensureLibrary("tidyr")
+ensureLibrary("lubridate")
+ensureLibrary("ggplot2")
+ensureLibrary("readr")
+ensureLibrary("caret")
+ensureLibrary("purrr")
+
 ```
 
 ## [NEW] Load each month 2024-2025
