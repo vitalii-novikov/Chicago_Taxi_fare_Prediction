@@ -36,6 +36,7 @@ library(lubridate)
 library(ggplot2)
 library(readr)
 library(caret)
+library(purrr)
 ```
 
 ## [NEW] Load each month 2024-2025
@@ -140,12 +141,8 @@ if (need_to_parse) {
 ## [NEW] Load data
 
 ```{r}
-library(readr)
-library(dplyr)
-library(purrr)
 
-
-files <- list.files("data", pattern = "^chicago_taxi_\\d{4}_\\d{2}\\.csv$", full.names = TRUE)
+files <- list.files("all_data", pattern = "^chicago_taxi_\\d{4}_\\d{2}\\.csv$", full.names = TRUE)
 
 taxi_data <- files %>%
   map_dfr(~ read_csv(.x, show_col_types = FALSE))
@@ -240,7 +237,7 @@ if (need_to_save) {
 ## [OLD] read saved dataset
 
 ```{r}
-chicago_taxi_2024 <- readr::read_csv("chicago_taxi_half2024.csv")
+#chicago_taxi_2024 <- #readr::read_csv("chicago_taxi_half2024.csv")
 ```
 
 ## explore dataset
@@ -274,6 +271,7 @@ df <- taxi_data %>%
 
 
 ```{r}
+
 par(mfrow = c(1, 3))
 boxplot(df$trip_seconds, main = "Trip Seconds", col = "lightblue")
 boxplot(df$trip_miles, main = "Trip Miles", col = "lightgreen")
@@ -325,7 +323,7 @@ df %>% select(speed_proxy, trip_miles, trip_seconds, fare) %>% summary()
 
 
 ```{r}
-par(mfrow = c(1, 2))
+par(mfrow = c(1, 3))
 boxplot(df$speed_proxy, main = "Speed_proxy", col = "lightgray")
 boxplot(filter(df, trip_miles > 0.5 )$speed_proxy, main = "Speed for miles>0.5", col = "lightgray")
 boxplot(filter(df, remove_outliers(speed_proxy))$speed_proxy, main = "Speed cutted", col = "lightgray")
