@@ -1,0 +1,27 @@
+---
+title: "Model"
+author: "Nicolas Pozdena BSc."
+format: pdf
+editor: visual
+---
+
+# Modelling
+
+## loading dataset
+
+
+
+
+## models
+
+### Neural Net
+
+### GLM
+
+### XGBoost
+
+### Random Forest
+
+### LM
+
+

@@ -1,0 +1,162 @@
+---
+title: "Download and Preperation"
+author: "Nicolas Pozdena BSc."
+format: html
+editor: visual
+---
+
+
+```{r echo: false}
+
+ensureLibrary <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+ensureLibrary("httr")
+ensureLibrary("jsonlite")
+ensureLibrary("dplyr")
+ensureLibrary("tidyr")
+ensureLibrary("lubridate")
+ensureLibrary("ggplot2")
+ensureLibrary("readr")
+ensureLibrary("caret")
+ensureLibrary("purrr")
+
+
+
+```
+
+
+## Download
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+
+```{r}
+# setup
+years = c(2013)
+base_url = "https://data.cityofchicago.org/resource/wrvz-psew.json"
+limit = 50000
+```
+
+You can add options to executable code like this
+
+```{r}
+for (year in years) {
+  for (month in c(1)) {  # You can replace c(1) with 1:12 for full-year
+
+    # Create time range for the full month
+    start_date <- sprintf("%04d-%02d-01T00:00:00", year, month)
+    if (month == 12) {
+      end_date <- sprintf("%04d-01-01T00:00:00", year + 1)
+    } else {
+      end_date <- sprintf("%04d-%02d-01T00:00:00", year, month + 1)
+    }
+
+    offset <- 0L
+    all_data <- list()
+    finished <- FALSE
+
+    cat("Downloading:", year, month, "\n")
+
+    while (!finished) {
+      resp <- GET(
+        url = base_url,
+        query = list(
+          `$where` = paste0(
+            "trip_start_timestamp >= '", start_date,
+            "' AND trip_start_timestamp < '", end_date, "'"
+          ),
+          `$limit` = limit,
+          `$offset` = as.integer(offset)
+        )
+      )
+
+      if (status_code(resp) != 200) {
+        print(resp$url)
+        warning("API error at ", year, "-", month, " offset ", offset)
+        break
+      }
+
+      data_chunk <- fromJSON(rawToChar(resp$content))
+
+      if (length(data_chunk) == 0) {
+        finished <- TRUE
+        break
+      }
+
+      clean_data <- clean_chunk(data_chunk)
+      all_data[[length(all_data) + 1]] <- clean_data
+
+       cat(sprintf("  Rows downloaded: %d\n", offset + nrow(clean_data)))
+      offset <- offset + limit
+    }
+
+    if (length(all_data) > 0) {
+      monthly_data <- bind_rows(all_data)
+
+      # Clean timestamps
+      cleaned_data <- monthly_data %>% 
+        filter(!is.na(trip_start_timestamp), !is.na(trip_end_timestamp)) %>%
+        mutate(
+          trip_start_timestamp = suppressWarnings(ymd_hms(trip_start_timestamp)),
+          trip_end_timestamp   = suppressWarnings(ymd_hms(trip_end_timestamp))
+        ) %>%
+        filter(!is.na(trip_start_timestamp), !is.na(trip_end_timestamp)) %>%
+        mutate(
+          trip_start_timestamp = floor_date(trip_start_timestamp, unit = "15 minutes"),
+          trip_end_timestamp   = floor_date(trip_end_timestamp, unit = "15 minutes")
+        )
+
+      # Select and aggregate
+      final_data <- cleaned_data %>%
+        select(
+          trip_start_timestamp,
+          trip_end_timestamp,
+          pickup_census_tract,
+          dropoff_census_tract,
+          trip_seconds,
+          trip_miles,
+          fare,
+          tips,
+          tolls,
+          extras,
+          trip_total
+        ) %>%
+        group_by(
+          trip_start_timestamp,
+          trip_end_timestamp,
+          pickup_census_tract,
+          dropoff_census_tract
+        ) %>%
+        summarise(
+          trip_seconds = mean(as.numeric(trip_seconds), na.rm = TRUE),
+          trip_miles   = mean(as.numeric(trip_miles), na.rm = TRUE),
+          fare         = mean(as.numeric(fare), na.rm = TRUE),
+          tips         = mean(as.numeric(tips), na.rm = TRUE),
+          tolls        = mean(as.numeric(tolls), na.rm = TRUE),
+          extras       = mean(as.numeric(extras), na.rm = TRUE),
+          trip_total   = mean(as.numeric(trip_total), na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      print("\n--------------------")
+      print(paste0("Data for month total: ", nrow(monthly_data)))
+      print(paste0("cleaned Data for month: ",nrow(cleaned_data)))
+      print(paste0("finald Data for month: ",nrow(final_data), " Reduction by ", round(nrow(final_data)/nrow(monthly_data)*100,2), "%"))
+      print("--------------------\n")
+
+      file_name <- sprintf("../all_data/chicago_taxi_%04d_%02d.csv", year, month)
+      write_csv(final_data, file_name)
+      cat("  ✔ Saved:", file_name, "- Total rows:", nrow(final_data), "\n")
+    } else {
+      cat("  ⚠ No data for:", year, month, "\n")
+    }
+  }
+}
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
