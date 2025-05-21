@@ -1,0 +1,89 @@
+---
+title: "Download and Preperation"
+author: "Nicolas Pozdena BSc."
+format: html
+editor: visual
+---
+
+```{r echo: false}
+
+ensureLibrary <- function(pkg) {
+  suppressPackageStartupMessages({
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg)
+    }
+    library(pkg, character.only = TRUE)
+  })
+}
+
+ensureLibrary("httr")
+ensureLibrary("jsonlite")
+ensureLibrary("dplyr")
+ensureLibrary("tidyr")
+ensureLibrary("lubridate")
+ensureLibrary("ggplot2")
+ensureLibrary("readr")
+ensureLibrary("caret")
+ensureLibrary("purrr")
+ensureLibrary("ggplot2")
+
+
+```
+
+```{r}
+load_all_csv <- function(folder_path) {
+  
+
+  files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+
+  if (length(files) == 0) {
+    warning("No CSV files found in the folder.")
+    return(NULL)
+  }
+
+  all_data <- lapply(files, function(file) {
+    temp <- read_csv(file, show_col_types = FALSE)
+    print(paste("Rows before filtering:", nrow(temp)))
+    temp <- temp %>% filter(count > 1)
+    print(paste("Rows after filtering:", nrow(temp)))
+    return(temp)
+  }) %>%
+    bind_rows()
+
+  return(all_data)
+}
+
+```
+
+```{r}
+df <- load_all_csv("../all_data/")
+
+
+```
+
+```{r}
+df
+```
+
+```{r}
+detect_outliers_iqr <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR_val
+  upper <- Q3 + 1.5 * IQR_val
+  return(which(x < lower | x > upper))
+}
+
+```
+
+```{r}
+outlierIndeces <- df  %>% select(trip_total) %>%  detect_outliers_iqr()
+
+outlierLess <- df[-outlierIndeces, ] %>% filter(trip_miles > 0.0 & fare > 0.0 & trip_seconds > 0.0 & !is.na(pickup_census_tract) & !is.na(dropoff_census_tract))
+```
+
+```{r}
+outlierLess
+
+```

@@ -5,7 +5,6 @@ format: html
 editor: visual
 ---
 
-
 ```{r echo: false}
 
 ensureLibrary <- function(pkg) {
@@ -29,24 +28,56 @@ ensureLibrary("purrr")
 
 ```
 
-
 ## Download
 
 Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
 
-
 ```{r}
 # setup
-years = c(2013)
+years = 2014:2023
 base_url = "https://data.cityofchicago.org/resource/wrvz-psew.json"
 limit = 50000
 ```
 
-You can add options to executable code like this
+```{r}
+
+cols_to_drop <- c(
+  "trip_id", 
+  "taxi_id",
+  "pickup_centroid_location",
+  "dropoff_centroid_location",
+  "payment_type",
+  "company",
+  "pickup_centroid_lingitude",
+  "pickup_centroid_latitude",
+  "dropoff_centroid_longitude",
+  "dropoff_centroid_latitude"
+)
+
+
+clean_chunk <- function(df) {
+  df <- df %>%
+    select(-any_of(cols_to_drop)) %>%
+    mutate(
+      trip_seconds = as.numeric(trip_seconds),
+      trip_miles = as.numeric(trip_miles),
+      fare = as.numeric(fare),
+      tips = as.numeric(tips),
+      tolls = as.numeric(tolls),
+      extras = as.numeric(extras),
+      trip_total = as.numeric(trip_total),
+      pickup_community_area = as.integer(pickup_community_area),
+      dropoff_community_area = as.integer(dropoff_community_area),
+      trip_start_timestamp = ymd_hms(trip_start_timestamp),
+      trip_end_timestamp = ymd_hms(trip_end_timestamp)
+    )
+  return(df)
+}
+```
 
 ```{r}
 for (year in years) {
-  for (month in c(1)) {  # You can replace c(1) with 1:12 for full-year
+  for (month in 1:12) {  # You can replace c(1) with 1:12 for full-year
 
     # Create time range for the full month
     start_date <- sprintf("%04d-%02d-01T00:00:00", year, month)
@@ -67,8 +98,10 @@ for (year in years) {
         url = base_url,
         query = list(
           `$where` = paste0(
-            "trip_start_timestamp >= '", start_date,
-            "' AND trip_start_timestamp < '", end_date, "'"
+            "trip_start_timestamp >= '", start_date, "' AND ",
+            "trip_start_timestamp < '", end_date, "' AND ",
+            "trip_miles > 0 AND fare > 0 AND trip_seconds > 0 AND ",
+            "pickup_census_tract IS NOT NULL AND dropoff_census_tract IS NOT NULL"
           ),
           `$limit` = limit,
           `$offset` = as.integer(offset)
@@ -100,22 +133,18 @@ for (year in years) {
 
       # Clean timestamps
       cleaned_data <- monthly_data %>% 
-        filter(!is.na(trip_start_timestamp), !is.na(trip_end_timestamp)) %>%
+        filter(!is.na(trip_start_timestamp)) %>%
         mutate(
-          trip_start_timestamp = suppressWarnings(ymd_hms(trip_start_timestamp)),
-          trip_end_timestamp   = suppressWarnings(ymd_hms(trip_end_timestamp))
+          trip_start_timestamp = suppressWarnings(ymd_hms(trip_start_timestamp))
         ) %>%
         filter(!is.na(trip_start_timestamp), !is.na(trip_end_timestamp)) %>%
         mutate(
-          trip_start_timestamp = floor_date(trip_start_timestamp, unit = "15 minutes"),
-          trip_end_timestamp   = floor_date(trip_end_timestamp, unit = "15 minutes")
+          trip_start_timestamp = floor_date(trip_start_timestamp, unit = "15 minutes")
         )
-
       # Select and aggregate
       final_data <- cleaned_data %>%
         select(
           trip_start_timestamp,
-          trip_end_timestamp,
           pickup_census_tract,
           dropoff_census_tract,
           trip_seconds,
@@ -128,7 +157,6 @@ for (year in years) {
         ) %>%
         group_by(
           trip_start_timestamp,
-          trip_end_timestamp,
           pickup_census_tract,
           dropoff_census_tract
         ) %>%
@@ -140,14 +168,15 @@ for (year in years) {
           tolls        = mean(as.numeric(tolls), na.rm = TRUE),
           extras       = mean(as.numeric(extras), na.rm = TRUE),
           trip_total   = mean(as.numeric(trip_total), na.rm = TRUE),
+          count        = n(),
           .groups = "drop"
         )
 
-      print("\n--------------------")
+      print("--------------------")
       print(paste0("Data for month total: ", nrow(monthly_data)))
       print(paste0("cleaned Data for month: ",nrow(cleaned_data)))
-      print(paste0("finald Data for month: ",nrow(final_data), " Reduction by ", round(nrow(final_data)/nrow(monthly_data)*100,2), "%"))
-      print("--------------------\n")
+      print(paste0("finald Data for month: ",nrow(final_data), " Reduction by ", round((1-nrow(final_data)/nrow(monthly_data))*100,2), "%"))
+      print("--------------------")
 
       file_name <- sprintf("../all_data/chicago_taxi_%04d_%02d.csv", year, month)
       write_csv(final_data, file_name)
@@ -158,5 +187,3 @@ for (year in years) {
   }
 }
 ```
-
-The `echo: false` option disables the printing of code (only output is displayed).
