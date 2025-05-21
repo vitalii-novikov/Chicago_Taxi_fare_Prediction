@@ -1,8 +1,6 @@
 ---
-title: "Download and Preperation"
-author: "Nicolas Pozdena BSc."
+title: "EDA"
 format: html
-editor: visual
 ---
 
 ```{r echo: false}
@@ -26,6 +24,9 @@ ensureLibrary("readr")
 ensureLibrary("caret")
 ensureLibrary("purrr")
 ensureLibrary("ggplot2")
+ensureLibrary("sf")
+ensureLibrary("igraph")
+ensureLibrary("ggraph")
 
 
 ```
@@ -35,6 +36,7 @@ load_all_csv <- function(folder_path) {
   
 
   files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+  files <- files[!grepl("census|tract", files, ignore.case = TRUE)]
 
   if (length(files) == 0) {
     warning("No CSV files found in the folder.")
@@ -43,9 +45,9 @@ load_all_csv <- function(folder_path) {
 
   all_data <- lapply(files, function(file) {
     temp <- read_csv(file, show_col_types = FALSE)
+    problems(temp)
     print(paste("Rows before filtering:", nrow(temp)))
-    temp <- temp %>% filter(count > 1)
-    print(paste("Rows after filtering:", nrow(temp)))
+    
     return(temp)
   }) %>%
     bind_rows()
@@ -61,10 +63,205 @@ df <- load_all_csv("../all_data/")
 
 ```
 
+
+
 ```{r}
-df
+summary(df)
+print(paste("Number of rows in original data:", nrow(df)))
+```
+```{r}
+df_clean <- df %>%
+  filter(
+    !is.na(pickup_census_tract),
+    !is.na(dropoff_census_tract),
+    !is.na(pickup_community_area),
+    !is.na(dropoff_community_area),
+    !is.na(trip_seconds),
+    !is.na(trip_miles),
+    !is.na(fare),
+    !is.na(trip_total)
+  )
+print(paste("Number of rows after filtering:", nrow(df_clean)))
+summary(df_clean)
 ```
 
+
+
+```{r}
+ggplot(df_clean, aes(x = trip_seconds / 60)) +
+  geom_histogram(fill = "steelblue") +
+  labs(x = "Trip Duration (minutes)", y = "Count") +
+  coord_cartesian(xlim = c(0, 120)) + 
+  theme_minimal()
+```
+
+```{r}
+ggplot(df_clean, aes(x = trip_miles)) +
+  geom_histogram(bins=5,fill = "steelblue") +
+  labs(x = "Trip Miles", y = "Count") +
+  theme_minimal()
+```
+```{r}
+df_clean <- df_clean %>%
+  mutate(speed_mph = trip_miles / (trip_seconds / 3600))
+```
+```{r}
+summary(df_clean$speed_mph)
+unrealistic_speeds <- df_clean %>% filter(speed_mph > 80)
+nrow(unrealistic_speeds)
+
+```
+
+```{r}
+ggplot(df_clean, aes(x = speed_mph)) +
+  geom_histogram(bins = 100, fill = "skyblue", alpha = 0.7) +
+  xlim(0, 100) +  # Focus on realistic range, ignoring extreme outliers
+  labs(title = "Distribution of Taxi Speeds (mph)",
+       x = "Speed (mph)",
+       y = "Number of Trips") +
+  theme_minimal()
+```
+
+
+```{r}
+df_clean <- df_clean %>% filter(speed_mph > 1, speed_mph <= 80)
+ggplot(df_clean, aes(x = trip_miles, y = trip_seconds / 60)) +
+  geom_point(alpha = 0.3) +
+  labs(x = "Trip Miles", y = "Trip Duration (minutes)") +
+  #coord_cartesian(xlim = c(0, 200)) + 
+  theme_minimal()
+```
+
+```{r}
+library(leaflet)
+ggplot(df_clean, aes(x = payment_type, y = tips)) +
+  geom_boxplot(fill = "orange") +
+  labs(x = "Payment Type", y = "Tips (USD)") +
+  theme_minimal()
+
+df_clean$hour <- hour(df_clean$trip_end_timestamp)
+
+ggplot(df_clean, aes(x = hour)) +
+  geom_bar(fill = "blue") +
+  labs(x = "Hour of Day", y = "Number of Trips") +
+  theme_minimal()
+
+df_clean %>%
+  group_by(company) %>%
+  summarise(total_revenue = sum(trip_total, na.rm = TRUE)) %>%
+  arrange(desc(total_revenue)) %>%
+  top_n(10) %>%
+  ggplot(aes(x = reorder(company, total_revenue), y = total_revenue)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(x = "Company", y = "Total Revenue (USD)") +
+  theme_minimal()
+
+leaflet(df_clean[1:1000,]) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    ~pickup_centroid_longitude, ~pickup_centroid_latitude,
+    radius = 2,
+    color = "blue",
+    opacity = 0.5
+  )
+
+avg_fare <- df_clean %>%
+  group_by(pickup_community_area) %>%
+  summarise(avg_fare = mean(fare, na.rm = TRUE))
+
+
+community_shapes <- read_delim("../all_data/CensusTracts.csv",delim=';')
+
+choropleth_data <- community_shapes %>%
+  left_join(avg_fare, by = c("COMMAREA" = "pickup_community_area"))
+choropleth_data <- choropleth_data %>%
+  mutate(geometry = st_as_sfc(the_geom)) %>% 
+  st_as_sf()
+ggplot(choropleth_data) +
+  geom_sf(aes(fill = avg_fare)) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(title = "Average Fare by Pickup Community Area") +
+  theme_minimal()
+
+num_vars <- df_clean %>%
+  select(trip_seconds, trip_miles, fare, tips, tolls, extras, trip_total)
+
+corrplot::corrplot(cor(num_vars, use = "complete.obs"), method = "color")
+```
+
+```{r}
+rides_origin_count <- df_clean %>%
+  group_by(pickup_community_area) %>%
+  summarise(origin_count = n()) %>%
+  arrange(desc(origin_count))
+
+rides_dest_count <- df_clean %>%
+  group_by(dropoff_community_area) %>%
+  summarise(dest_count = n()) %>%
+  arrange(desc(dest_count))
+
+popular_pairs <- df_clean %>%
+  group_by(pickup_community_area, dropoff_community_area) %>%
+  summarise(pair_count = n()) %>%
+  arrange(desc(pair_count))
+```
+
+```{r}
+rides_origin_count %>%
+  top_n(20, origin_count) %>%
+  ggplot(aes(x = reorder(as.factor(pickup_community_area), origin_count), y = origin_count)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 20 Community Areas by Ride Origin Count",
+       x = "Pickup Community Area",
+       y = "Number of Rides") +
+  theme_minimal()
+
+rides_dest_count %>%
+  top_n(20, dest_count) %>%
+  ggplot(aes(x = reorder(as.factor(dropoff_community_area), dest_count), y = dest_count)) +
+  geom_col(fill = "darkorange") +
+  coord_flip() +
+  labs(title = "Top 20 Community Areas by Ride Destination Count",
+       x = "Dropoff Community Area",
+       y = "Number of Rides") +
+  theme_minimal()
+
+top_pairs <- popular_pairs %>%
+  ungroup() %>%
+  arrange(desc(pair_count)) %>%
+  slice_head(n = 20)
+
+edges <- top_pairs %>% 
+  select(from = pickup_community_area, to = dropoff_community_area, weight = pair_count)
+
+# Convert to character to avoid igraph warnings
+edges$from <- as.character(edges$from)
+edges$to <- as.character(edges$to)
+library(igraph)
+library(ggraph)
+g <- graph_from_data_frame(edges, directed = TRUE)
+
+# Plot using ggraph
+ggraph(g, layout = "fr") +  # Fruchterman-Reingold layout (force-directed)
+  geom_edge_link(aes(width = weight), alpha = 0.8, colour = "steelblue") +
+  geom_node_point(size = 5, color = "tomato") +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_edge_width(range = c(0.5, 3)) +
+  labs(title = "Popular Ride Flows Between Community Areas",
+       edge_width = "Number of Rides") +
+  theme_void()
+ggplot(top_pairs, aes(x = reorder(paste(pickup_community_area, dropoff_community_area, sep = "→"), pair_count), 
+                        y = pair_count, fill = pair_count)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(title = "Top 20 Popular Community Area Pairs by Ride Count",
+       x = "Pickup → Dropoff Community Area",
+       y = "Number of Rides") +
+  theme_minimal()
+```
 ```{r}
 detect_outliers_iqr <- function(x) {
   Q1 <- quantile(x, 0.25, na.rm = TRUE)
