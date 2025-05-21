@@ -5,23 +5,381 @@ format: pdf
 editor: visual
 ---
 
+```{r echo: false}
+
+ensureLibrary <- function(pkg) {
+  suppressPackageStartupMessages({
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg)
+    }
+    library(pkg, character.only = TRUE)
+  })
+}
+
+ensureLibrary("httr")
+ensureLibrary("jsonlite")
+ensureLibrary("dplyr")
+ensureLibrary("tidyr")
+ensureLibrary("lubridate")
+ensureLibrary("ggplot2")
+ensureLibrary("readr")
+ensureLibrary("caret")
+ensureLibrary("purrr")
+ensureLibrary("ggplot2")
+ensureLibrary("neuralnet")
+ensureLibrary("xgboost")
+ensureLibrary("randomForest")
+ensureLibrary("patchwork")
+ensureLibrary("Metrics")
+
+```
+
+```{r echo: false}
+load_all_csv <- function(folder_path) {
+  
+
+  files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+
+  if (length(files) == 0) {
+    warning("No CSV files found in the folder.")
+    return(NULL)
+  }
+
+  all_data <- lapply(files, function(file) {
+    temp <- read_csv(file, show_col_types = FALSE)
+    print(paste("Rows before filtering:", nrow(temp)))
+    return(temp)
+  }) %>%
+    bind_rows()
+
+  return(all_data)
+}
+
+showPredictions <- function(predict, test, model) {
+  # Ensure numeric vectors
+  predict <- as.numeric(predict)
+  test <- as.numeric(test)
+  
+  # Calculate metrics
+  rmse_val <- rmse(test, predict)
+  mae_val <- mae(test, predict)
+  r2_val <- 1 - sum((test - predict)^2) / sum((test - mean(test))^2)
+
+  # Prepare metrics for plotting
+  metrics_df <- data.frame(
+    Metric = c("RMSE", "MAE", "R²"),
+    Value = c(rmse_val, mae_val, r2_val)
+  )
+
+  # Scatter plot
+  gp1 <- ggplot() + 
+    aes(x = test, y = predict) +
+    geom_point(color = "steelblue", alpha = 0.6) +
+    coord_equal(xlim = c(0, 200), ylim = c(0, 200)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      title = paste(model, "Predictions"),
+      subtitle = paste0("(N = ", length(predict), ")"),
+      x = "Actual Fare",
+      y = "Predicted Fare"
+    ) +
+    theme_minimal()
+
+  # Bar chart of metrics
+  gp2 <- ggplot(metrics_df, aes(x = Metric, y = Value, fill = Metric)) +
+    geom_col(width = 0.6, show.legend = FALSE) +
+    geom_text(aes(label = round(Value, 2)), vjust = -0.5, size = 4) +
+    labs(
+      title = "Model Evaluation Metrics",
+      y = NULL, x = NULL
+    ) +
+    theme_minimal() +
+    ylim(0, max(metrics_df$Value) * 1.2)
+
+  # Combine and return both plots
+  return(gp1 + gp2)
+}
+
+```
+
 # Modelling
 
 ## loading dataset
 
 
+```{r}
+df <- load_all_csv("../all_data")
+
+```
+```{r}
+reducedDf <- df %>% 
+  select(
+    trip_start_timestamp, 
+    pickup_centroid_latitude, 
+    pickup_centroid_longitude, 
+    dropoff_centroid_latitude, 
+    dropoff_centroid_longitude, 
+    trip_seconds, 
+    trip_miles, 
+    fare) %>%
+  filter(
+    !is.na(trip_start_timestamp) &  
+    !is.na(pickup_centroid_latitude) &  
+    !is.na(pickup_centroid_longitude) &  
+    !is.na(dropoff_centroid_latitude) &  
+    !is.na(dropoff_centroid_longitude) & 
+    trip_seconds>0 & 
+    trip_miles > 0 & 
+    fare > 0)
+
+rm(df)
+
+```
+
+## splits
+
+```{r}
+set.seed(111)
+
+size = nrow(reducedDf)
+wholeData <- sample(1:size, 0.01 * size)
+mD <- reducedDf[wholeData, ]
 
 
-## models
+workOnData <- function(modelData){
+  
+  modelData$weekday <- as.factor(weekdays(modelData$trip_start_timestamp))
+  modelData$day <- as.POSIXlt(modelData$trip_start_timestamp)$mday
+  modelData$month <- as.POSIXlt(modelData$trip_start_timestamp)$mon + 1
+  modelData$year <- as.POSIXlt(modelData$trip_start_timestamp)$year + 1900
+  
+  ts_lt <- as.POSIXlt(modelData$trip_start_timestamp)
+  
+  # Extract hours, minutes, seconds
+  hour <- ts_lt$hour
+  minute <- ts_lt$min
+  second <- ts_lt$sec
+  
+  
+  time_decimal <- hour + minute / 60 + second / 3600
+  
+  
+  modelData$time <- time_decimal
+  
+  
+  modelData <- modelData %>% select(-trip_start_timestamp)
+  
+  modelData %>% head()
+  
+  rm(hour)
+  rm(minute)
+  rm(second)
+  rm(ts_lt)
+  rm(time_decimal)
+  
+  return(modelData)
+}
+
+mD <- workOnData(mD) 
+
+```
+
+```{r}
+
+train_index <- sample(1:nrow(mD), 0.8 * nrow(mD))
+train <- mD[train_index, ]
+test <- mD[-train_index, ]
+
+```
+
+```{r}
+form <- fare ~ .
+```
+
 
 ### Neural Net
+```{r}
+
+
+train_matrix <- model.matrix(form, data = train)[, -1]
+test_matrix  <- model.matrix(form, data = test)[, -1]
+
+
+train_data_nn <- data.frame(fare = train$fare, train_matrix)
+test_data_nn  <- data.frame(fare = test$fare, test_matrix)
+
+
+nn_formula <- as.formula(paste("fare ~", paste(colnames(train_matrix), collapse = " + ")))
+
+
+model_nn <- neuralnet(nn_formula, data = train_data_nn, hidden = c(2, 3),linear.output = FALSE)
+pred_nn <- compute(model_nn, test_matrix)$net.result
+
+showPredictions(pred_nn, test$fare, "Neural Net")
+```
 
 ### GLM
+```{r}
+model_glm <- glm(form, data=train)
+pred_glm <- predict(model_glm, newdata=test)
+
+showPredictions(pred_glm, test$fare, "GLM")
+```
+
 
 ### XGBoost
 
+```{r}
+x_train <- model.matrix(form, data = train)[, -1]
+x_test  <- model.matrix(form, data = test)[, -1]
+y_train <- train$fare
+y_test  <- test$fare
+
+model_xgb <- xgboost(data = x_train,label = y_train,nrounds = 50, objective = "reg:squarederror", verbose = 0)
+pred_xgb <- predict(model_xgb, newdata = x_test)
+
+showPredictions(pred_xgb, y_test, "XGBoost")
+
+```
+
+
 ### Random Forest
+```{r}
+model_rf <- randomForest(form, data=train)
+pred_rf <- predict(model_rf, newdata=test)
+
+showPredictions(pred_rf, test$fare, "Random Forrest")
+```
 
 ### LM
+```{r}
+model_lm <- lm(form, data=train)
+pred_lm <- predict(model_lm, newdata=test)
+
+showPredictions(pred_lm, test$fare, "Linear Model")
+
+```
+
+## percentage test 
+
+```{r}
+set.seed(123)
+target_col <- "fare"
+form <- as.formula(paste(target_col, "~ ."))
+percentages <- c(0.001, 0.002, 0.003, 0.004, 0.005)
 
 
+results <- data.frame()
+
+# Loop through each percentage
+for (p in percentages) {
+  print(paste("Running", p*100, "%"))
+  
+  n_rows <- ceiling(nrow(reducedDf) * p)
+  df_sample <- reducedDf[sample(nrow(reducedDf), n_rows), ]
+  
+  df_sample <- workOnData(df_sample)
+
+  train_idx <- sample(1:nrow(df_sample), size = 0.8 * nrow(df_sample))
+  train <- df_sample[train_idx, ]
+  test  <- df_sample[-train_idx, ]
+
+  y_test <- test[[target_col]]
+  
+  # ---- MODELS ----
+
+  model_list <- list()
+
+  # 1. LM
+  start_time <- Sys.time()
+  model <- lm(form, data = train)
+  elapsed <- Sys.time() - start_time
+  preds <- predict(model, newdata = test)
+  model_list[["LM"]] <- list(time = elapsed, pred = preds)
+
+  # 2. GLM
+  start_time <- Sys.time()
+  model <- glm(form, data = train)
+  elapsed <- Sys.time() - start_time
+  preds <- predict(model, newdata = test)
+  model_list[["GLM"]] <- list(time = elapsed, pred = preds)
+
+  # 3. Random Forest
+  start_time <- Sys.time()
+  model <- randomForest(form, data = train)
+  elapsed <- Sys.time() - start_time
+  preds <- predict(model, newdata = test)
+  model_list[["RF"]] <- list(time = elapsed, pred = preds)
+
+  # 4. XGBoost
+  x_train <- model.matrix(form, data = train)[, -1]
+  x_test  <- model.matrix(form, data = test)[, -1]
+  y_train <- train[[target_col]]
+  
+  start_time <- Sys.time()
+  model <- xgboost(data = x_train, label = y_train, nrounds = 20, objective = "reg:squarederror", verbose = 0)
+  elapsed <- Sys.time() - start_time
+  preds <- predict(model, newdata = x_test)
+  model_list[["XGB"]] <- list(time = elapsed, pred = preds)
+
+
+  # ---- Collect results ----
+  for (model_name in names(model_list)) {
+    entry <- model_list[[model_name]]
+    preds <- entry$pred
+    elapsed <- entry$time
+    
+    rmse_val <- rmse(y_test, preds)
+    mae_val  <- mae(y_test, preds)
+    r2_val   <- 1 - sum((y_test - preds)^2) / sum((y_test - mean(y_test))^2)
+
+    results <- rbind(results, data.frame(
+      percentage = p,
+      rows = n_rows,
+      model = model_name,
+      time = as.numeric(elapsed, units = "secs"),
+      rmse = rmse_val,
+      mae = mae_val,
+      r2 = r2_val
+    ))
+  }
+}
+
+# Show results
+print(results)
+```
+```{r}
+
+results %>%
+  ggplot(aes(x = as.factor(rows), y = rmse, color = model, size=time)) +
+  geom_point() +
+  labs(
+    title = "RMSE by Model and Data Percentage",
+    x = "ROWS",
+    y = "RMSE",
+    fill = "Model"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+
+metric_deltas_scaled <- results %>% filter(rows != 20827) %>%
+  arrange(model, rows) %>%
+  group_by(model) %>%
+  mutate(
+    delta_rows = rows - lag(rows),
+    delta_rmse = rmse - lag(rmse),
+    delta_mae  = mae  - lag(mae),
+    delta_r2   = r2   - lag(r2),
+    delta_time = time - lag(time)
+  ) %>%
+  filter(!is.na(delta_rows) & delta_rows > 0) %>%
+  summarise(
+    rmse_per_10k = mean(delta_rmse / delta_rows * 10000, na.rm = TRUE),
+    mae_per_10k  = mean(delta_mae / delta_rows * 10000, na.rm = TRUE),
+    r2_per_10k   = mean(delta_r2  / delta_rows * 10000, na.rm = TRUE),
+    time_per_10k = mean(delta_time/ delta_rows * 10000, na.rm = TRUE)
+  )
+metric_deltas_scaled
+```
