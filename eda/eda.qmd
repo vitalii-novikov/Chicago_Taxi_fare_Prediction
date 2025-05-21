@@ -262,6 +262,33 @@ ggplot(top_pairs, aes(x = reorder(paste(pickup_community_area, dropoff_community
        y = "Number of Rides") +
   theme_minimal()
 ```
+
+```{r}
+average_fare_per_mile_per_day <- df_clean %>%
+  filter(!is.na(trip_total), !is.na(trip_miles), trip_miles > 0) %>%
+  mutate(day = as.Date(trip_start_timestamp)) %>%
+  filter(day >= as.Date("2024-01-01") & day <= as.Date("2025-01-01")) %>%
+  group_by(day) %>%
+  summarise(
+    total_fare = sum(trip_total, na.rm = TRUE),
+    total_distance = sum(trip_miles, na.rm = TRUE),
+    avg_fare_per_mile = total_fare / total_distance
+  ) %>%
+  arrange(day)
+yearly_avg <- mean(average_fare_per_mile_per_day$avg_fare_per_mile, na.rm = TRUE)
+
+ggplot(average_fare_per_mile_per_day, aes(x = day, y = avg_fare_per_mile)) +
+  geom_line(color = "blue") +
+  geom_hline(yintercept = yearly_avg, linetype = "dashed", color = "red") +
+  labs(
+    title = "Average Fare per Mile per Day",
+    subtitle = paste("Yearly average fare per mile:", round(yearly_avg, 2)),
+    x = "Date",
+    y = "Average Fare per Mile (USD)"
+  ) +
+  theme_minimal()
+```
+
 ```{r}
 detect_outliers_iqr <- function(x) {
   Q1 <- quantile(x, 0.25, na.rm = TRUE)
