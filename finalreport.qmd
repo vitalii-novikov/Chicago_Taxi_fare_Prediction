@@ -1,0 +1,151 @@
+---
+title: "Final Report"
+author: "Novikov Vitalii, Pozdena Nicolas, Prinz Paul, Shapovalov Anton, Wadhwani Amar"
+format: pdf
+editor: visual
+---
+
+\newpage
+
+## Preface
+
+This report was created as part of the Maters study program Data Science of the University of Applied Sciences Vienna. All authors contributed equally on this project and have been part from the beginning and were part of all decision made.
+
+All of the used data is openly accessible and the sources are referenced in the chapters below.
+
+We would like to thank Dr. Andreas Reschreiter for his advisory role on the report.
+
+\newpage
+
+## Introduction
+
+The aim of this report was to describe and document the process of building a fare prediction model for chicago taxi fares, based on the openly available data from the city of chicago ([dataset](https://data.cityofchicago.org/Transportation/Taxi-Trips-2013-2023-/wrvz-psew/about_data "click to open the dataset")). The reason for this project was to train and gain experience on machine learning model, handling large datasets, and planning and finishing a datadriven project from first the first idea to the deployed prototype.
+
+### Goals
+
+Two measure the success of this project certain goals and requirements were imposed on the projectteam. Some of these goals and requirements were set by Dr. Anderas Reschreiter as part of the assignment other goals the project team set for them self.
+
+The requirements for the assignment were to develop a model that can predict a taxi fare based on the input of two addresses (pickup and drop off) as well as a time when the taxi should pick up a potential customer. Therefor a shiny app should be developed that allows a user to input these information quickly.
+
+The goals the team set for them self are described below.
+
+#### Qualitative Objectives
+
+-   Develop a predictive model to estimate the fare amount for taxi trips in Chicago
+
+-   Evaluate various modeling approaches and deploy the best solution
+
+#### Quantitative Objectives
+
+-   Achieve **RM (SE per 10 minutes) \< \$2** on the validation set
+
+-   Achieve **mean AE/fare \< 5%** for on the validation set
+
+-   Compare performance across 5 different model types
+
+### Models
+
+The models that were considered and analysed in this report were chosen for their effectiveness with large datasets. All models were tested and compared with the same quantitative objectives.
+
+-   Neural network
+
+-   XGBoost
+
+-   Random Forest
+
+-   Linear Model
+
+-   GLM
+
+\newpage
+
+## Planned Process
+
+The process of this project and report can be separated in 7 steps.
+
+1.  data aquisition
+
+2.  exploratory data analysis
+
+3.  data cleaning
+
+4.  dataset preparation
+
+5.  model training and evaluation
+
+6.  ui development
+
+7.  combining the final works
+
+Each of these steps is discussed in a separate chapter. During the development and project phase multiple of those steps were done simultaneously to enable a swift and fast process progression.
+
+And estimated project timeline can be seen below
+
+\[ insert timeline \]
+
+\newpage
+
+## Data acquisition
+
+As mentioned in the introduction the data for this project was made available by the city of chicago via their online data platform <https://data.cityofchicago.org/>. The dataset provides information on taxi fares from the year 2013 until the year 2023. In these ten years 212 million trips were recorded amounting to approximately nine GB of data. The data was made available via a direct data download or an exposed API-Endpoint.
+
+### challenges
+
+The first challenge faced in this project was the data acquisition, although the data is openly available the downloading process showed to be very difficult. The direct data download only allowed for all rows to be downloaded in one file and due to the limited downloading bandwidth from the data servers the download was not able to be completed. The API Endpoint uses the Socrata Framework, allowing for easy querying of the data. However the API also had an imposed limit for their bandwitdh resulting in a slow month-wise download in 50.000 row steps.
+
+\[insert downloading code\]
+
+### raw data
+
+the data included these 23 columns.
+
+| Column Name | Description | API Field Name | Data Type |
+|-------------|-------------|----------------|-----------|
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+|             |             |                |           |
+
+\newpage
+
+\newpage
+
+## Data cleaning
+
+### data completeness
+
+### error and impossible measurements
+
+\newpage
+
+## Dataset preparation
+
+### column selection
+
+### stratifying process
+
+### dataset sizes
+
+\newpage
+
+## Model training and evaluation

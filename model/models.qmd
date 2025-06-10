@@ -37,69 +37,120 @@ ensureLibrary("Metrics")
 ```{r echo: false}
 load_all_csv <- function(folder_path) {
   
-
-  files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+ files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
 
   if (length(files) == 0) {
     warning("No CSV files found in the folder.")
     return(NULL)
   }
 
-  all_data <- lapply(files, function(file) {
-    temp <- read_csv(file, show_col_types = FALSE)
-    print(paste("Rows before filtering:", nrow(temp)))
-    return(temp)
-  }) %>%
-    bind_rows()
+  all_data <- list()
+  
+  for (f in files) {
+    temp <- read.csv(f)
+    temp <- temp%>% select(-X, -trip_start_timestamp, -pickup_census_tract, -dropoff_census_tract, -pickup_census_tract_centroid, -dropoff_census_tract_centroid, -type, -dropoff_census_tract.1, -pickup_census_tract.1) %>% mutate(weekday = as.factor(weekday))
+    all_data[[f]] <- temp  # use filename as list name (optional but useful)
+  }
 
   return(all_data)
 }
 
-showPredictions <- function(predict, test, model) {
-  # Ensure numeric vectors
-  predict <- as.numeric(predict)
-  test <- as.numeric(test)
-  
-  # Calculate metrics
-  rmse_val <- rmse(test, predict)
-  mae_val <- mae(test, predict)
-  r2_val <- 1 - sum((test - predict)^2) / sum((test - mean(test))^2)
+evaluate_and_plot_full_model <- function(y, duration_seconds, prediction, model = "Model", dataset = "Dataset") {
+  if (length(y) != length(prediction) || length(y) != length(duration_seconds)) {
+    stop("All input vectors must have the same length.")
+  }
 
-  # Prepare metrics for plotting
-  metrics_df <- data.frame(
+  # Convert inputs
+  y <- as.numeric(y)
+  prediction <- as.numeric(prediction)
+  duration_minutes <- duration_seconds / 60
+
+  # --- Metrics ---
+  rmse_val <- rmse(y, prediction)
+  mae_val <- mae(y, prediction)
+  r2_val <- 1 - sum((y - prediction)^2) / sum((y - mean(y))^2)
+
+  squared_errors <- (y - prediction)^2
+  scaling_factors <- 10 / duration_minutes
+  rmse_10min <- sqrt(mean(squared_errors * scaling_factors^2, na.rm = TRUE))
+
+  ae_percent <- abs(y - prediction) / y
+  mean_ae_percent <- mean(ae_percent, na.rm = TRUE)
+
+  is_ok <- (rmse_10min < 2) & (mean_ae_percent < 0.05)
+
+  # --- Plots ---
+
+  # 1. Prediction vs Actual
+  p_pred <- ggplot(data.frame(y, prediction), aes(x = y, y = prediction)) +
+    geom_point(color = "steelblue", alpha = 0.6) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      title = paste(model, "Predictions"),
+      subtitle = paste0("Dataset: ", dataset, " (N = ", length(prediction), ")"),
+      x = "Actual",
+      y = "Predicted"
+    ) +
+    theme_minimal()
+
+  # 2. Metric bar chart
+  metric_df <- data.frame(
     Metric = c("RMSE", "MAE", "R²"),
     Value = c(rmse_val, mae_val, r2_val)
   )
 
-  # Scatter plot
-  gp1 <- ggplot() + 
-    aes(x = test, y = predict) +
-    geom_point(color = "steelblue", alpha = 0.6) +
-    coord_equal(xlim = c(0, 200), ylim = c(0, 200)) +
-    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-    labs(
-      title = paste(model, "Predictions"),
-      subtitle = paste0("(N = ", length(predict), ")"),
-      x = "Actual Fare",
-      y = "Predicted Fare"
-    ) +
-    theme_minimal()
-
-  # Bar chart of metrics
-  gp2 <- ggplot(metrics_df, aes(x = Metric, y = Value, fill = Metric)) +
+  p_metrics <- ggplot(metric_df, aes(x = Metric, y = Value, fill = Metric)) +
     geom_col(width = 0.6, show.legend = FALSE) +
     geom_text(aes(label = round(Value, 2)), vjust = -0.5, size = 4) +
     labs(
       title = "Model Evaluation Metrics",
       y = NULL, x = NULL
     ) +
-    theme_minimal() +
-    ylim(0, max(metrics_df$Value) * 1.2)
+    theme_minimal()
 
-  # Combine and return both plots
-  return(gp1 + gp2)
+  # 3. Summary: RMSE 10min vs %AE
+  summary_df <- data.frame(
+    RMSE_10min = rmse_10min,
+    Mean_AE_percent = mean_ae_percent,
+    Status = ifelse(is_ok, "OK", "Not OK")
+  )
+
+  p_summary <- ggplot(summary_df, aes(x = RMSE_10min, y = Mean_AE_percent)) +
+    geom_point(aes(color = Status), size = 5) +
+    geom_vline(xintercept = 2, linetype = "dashed", color = "black") +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    scale_color_manual(values = c("OK" = "green", "Not OK" = "red")) +
+    labs(
+      title = "Evaluation: Scaled RMSE vs % Error",
+      x = "RMSE (scaled to 10 min)",
+      y = "Mean Absolute Error (%)"
+    ) +
+    theme_minimal()
+
+  # 4. Individual error scatter
+  individual_df <- data.frame(
+    AbsoluteError_10min = abs(y - prediction) * (10 / duration_minutes),
+    PercentError = ae_percent
+  )
+
+  p_individual <- ggplot(individual_df, aes(x = AbsoluteError_10min, y = PercentError)) +
+    geom_point(alpha = 0.6, color = "blue") +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    labs(
+      title = "Individual Errors",
+      x = "Absolute Error (scaled to 10 min)",
+      y = "Percentage Error"
+    ) +
+    theme_minimal()
+
+  # Return all 4 plots as a named list
+  return(list(
+    scatter_plot = p_pred,
+    metric_bar = p_metrics,
+    summary_plot = p_summary,
+    individual_errors_plot = p_individual
+  ))
 }
-
 ```
 
 # Modelling
@@ -107,33 +158,8 @@ showPredictions <- function(predict, test, model) {
 ## loading dataset
 
 
-```{r}
-df <- load_all_csv("../all_data")
 
-```
-```{r}
-reducedDf <- df %>% 
-  select(
-    trip_start_timestamp, 
-    pickup_centroid_latitude, 
-    pickup_centroid_longitude, 
-    dropoff_centroid_latitude, 
-    dropoff_centroid_longitude, 
-    trip_seconds, 
-    trip_miles, 
-    fare) %>%
-  filter(
-    !is.na(trip_start_timestamp) &  
-    !is.na(pickup_centroid_latitude) &  
-    !is.na(pickup_centroid_longitude) &  
-    !is.na(dropoff_centroid_latitude) &  
-    !is.na(dropoff_centroid_longitude) & 
-    trip_seconds>0 & 
-    trip_miles > 0 & 
-    fare > 0)
-
-rm(df)
-
+```{}
 ```
 
 ## splits
@@ -196,8 +222,8 @@ test <- mD[-train_index, ]
 form <- fare ~ .
 ```
 
-
 ### Neural Net
+
 ```{r}
 
 
@@ -219,13 +245,13 @@ showPredictions(pred_nn, test$fare, "Neural Net")
 ```
 
 ### GLM
+
 ```{r}
 model_glm <- glm(form, data=train)
 pred_glm <- predict(model_glm, newdata=test)
 
 showPredictions(pred_glm, test$fare, "GLM")
 ```
-
 
 ### XGBoost
 
@@ -242,8 +268,8 @@ showPredictions(pred_xgb, y_test, "XGBoost")
 
 ```
 
-
 ### Random Forest
+
 ```{r}
 model_rf <- randomForest(form, data=train)
 pred_rf <- predict(model_rf, newdata=test)
@@ -252,6 +278,7 @@ showPredictions(pred_rf, test$fare, "Random Forrest")
 ```
 
 ### LM
+
 ```{r}
 model_lm <- lm(form, data=train)
 pred_lm <- predict(model_lm, newdata=test)
@@ -260,7 +287,7 @@ showPredictions(pred_lm, test$fare, "Linear Model")
 
 ```
 
-## percentage test 
+## percentage test
 
 ```{r}
 set.seed(123)
@@ -348,6 +375,7 @@ for (p in percentages) {
 # Show results
 print(results)
 ```
+
 ```{r}
 
 results %>%
@@ -362,6 +390,7 @@ results %>%
   theme_minimal()
 
 ```
+
 ```{r}
 
 metric_deltas_scaled <- results %>% filter(rows != 20827) %>%
@@ -382,4 +411,62 @@ metric_deltas_scaled <- results %>% filter(rows != 20827) %>%
     time_per_10k = mean(delta_time/ delta_rows * 10000, na.rm = TRUE)
   )
 metric_deltas_scaled
+```
+
+
+```{r}
+
+remove_outliers_z <- function(df, feature1, feature2, threshold = 3) {
+  z1 <- abs(scale(df[[feature1]]))
+  z2 <- abs(scale(df[[feature2]]))
+  
+  df_clean <- df[(z1 < threshold) & (z2 < threshold), ]
+  return(df_clean)
+}
+
+```
+
+
+```{r}
+df <- load_all_csv("../all_data/datasets")
+form <- fare ~ .
+percentage <- 0.8
+```
+
+
+```{r}
+models <- list(
+  "GLM" = glm,
+  "LM" = lm,
+  "RandomForest" = randomForest
+)
+
+for (ds in rev(names(df))) {
+    dataSet <- df[[ds]]
+    dataSet <- remove_outliers_z(dataSet, "fare", "trip_seconds", 2)
+    train_index <- sample(1:nrow(dataSet), percentage * nrow(dataSet))
+    train <- dataSet[train_index, ]
+    test <- dataSet[-train_index, ]
+    
+     # Extract target and clean test set
+    y <- test$fare
+    test <- test %>% select(-fare)
+    
+  for (m in names(models)) {
+    print(paste0("Working on ", m , " with ", ds))
+    
+    
+   
+    
+    # Fit model
+    model_func <- models[[m]]
+    model <- model_func(form, data = train, na.action = na.omit)
+    
+    # Predict
+    pred <- predict(model, newdata = test)
+    
+    # Plot evaluation
+    print(evaluate_and_plot_full_model(y, test$trip_seconds, pred, model = m, dataset = ds))
+  }
+}
 ```
