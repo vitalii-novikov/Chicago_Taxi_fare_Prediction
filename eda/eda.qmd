@@ -27,7 +27,20 @@ ensureLibrary("ggplot2")
 ensureLibrary("sf")
 ensureLibrary("igraph")
 ensureLibrary("ggraph")
+ensureLibrary("tidygraph")
+ensureLibrary("networkD3")
 
+```
+
+```{r}
+detect_outliers_iqr <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR_val
+  upper <- Q3 + 1.5 * IQR_val
+  return(which(x < lower | x > upper))
+}
 
 ```
 
@@ -69,53 +82,135 @@ df <- load_all_csv("../all_data/")
 summary(df)
 print(paste("Number of rows in original data:", nrow(df)))
 ```
+Remove data with no pickup or dropoff census tract/community area
 ```{r}
 df_clean <- df %>%
   filter(
     !is.na(pickup_census_tract),
     !is.na(dropoff_census_tract),
     !is.na(pickup_community_area),
-    !is.na(dropoff_community_area),
-    !is.na(trip_seconds),
-    !is.na(trip_miles),
-    !is.na(fare),
-    !is.na(trip_total)
+    !is.na(dropoff_community_area)
+    #!is.na(trip_seconds),
+    #!is.na(trip_miles),
+    #!is.na(fare),
+    #!is.na(trip_total)
   )
-print(paste("Number of rows after filtering:", nrow(df_clean)))
+print(paste("Number of rows after filtering NAs:", nrow(df_clean)))
 summary(df_clean)
 ```
 
-
+Inspect observations where trip seconds/miles is missing to check if it can be imputed. The data does not make sense, either the timestamps and trip_seconds dont match or the trip_seconds is missing or the start and end timestamp are reversed. The fare in some cases is unrealistic given the trip seconds (56	NA	294.77) or miles.
+For most observations, all values are NA. (trip_start_timestamp, trip_end_timestamp, trip_seconds, trip_miles(0), fare,tips, trip_total). So it seems safe to remove them as well.
+We will also remove values where trip_start_time is greater than trip_end_time. 
 
 ```{r}
-ggplot(df_clean, aes(x = trip_seconds / 60)) +
-  geom_histogram(fill = "steelblue") +
-  labs(x = "Trip Duration (minutes)", y = "Count") +
-  coord_cartesian(xlim = c(0, 120)) + 
-  theme_minimal()
+df_clean %>%
+  filter(is.na(trip_seconds) | is.na(trip_miles)) %>%
+  
+  select(trip_start_timestamp, trip_end_timestamp, trip_seconds, trip_miles, fare,tips, trip_total) %>%
+  arrange(trip_start_timestamp)
+```
+```{r}
+df_clean <- df_clean %>%
+  filter(
+    !is.na(trip_seconds),
+    !is.na(trip_miles),
+    !is.na(fare),
+    !is.na(trip_total),
+    trip_start_timestamp < trip_end_timestamp
+  )
+summary(df_clean)
+nrow(df_clean)
+```
+```{r}
+outlierIndices_total <- df_clean %>% select(trip_total) %>% detect_outliers_iqr()
+outlierIndices_miles <- df_clean %>% select(trip_miles) %>% detect_outliers_iqr()
+outlierIndices_duration <- df_clean %>% select(trip_seconds) %>% detect_outliers_iqr()
+
+all_outlier_indices <- unique(c(outlierIndices_total, outlierIndices_miles, outlierIndices_duration))
+
+df_clean <- df_clean[-all_outlier_indices, ] %>% filter(trip_miles > 0.0 & fare > 0.0 & trip_seconds > 0.0 & !is.na(pickup_census_tract) & !is.na(dropoff_census_tract))
+summary(df_clean)
+nrow(df_clean)
 ```
 
+
+We extract the date, hour, day of week, month, and whether the trip is on a weekend or during rush hour. We calculate the fare per mile and fare per minute. We also check if the pickup and dropoff community areas are the same. We also check if a tip was given and calculate the tip ratio. Finally, we log-transform the trip total and trip miles to reduce skewness.
 ```{r}
-ggplot(df_clean, aes(x = trip_miles)) +
-  geom_histogram(bins=5,fill = "steelblue") +
+df_fe <- df_clean %>%
+  mutate(
+    
+    trip_date = as.Date(trip_start_timestamp),
+    trip_hour = hour(trip_start_timestamp),
+    trip_day = wday(trip_start_timestamp, label = TRUE),
+    trip_month = month(trip_start_timestamp, label = TRUE),
+    is_weekend = trip_day %in% c("Sat", "Sun"),
+    is_rush_hour = trip_hour %in% c(7:9, 16:18),
+    
+    trip_duration = trip_seconds / 60,
+    fare_per_mile = trip_total / trip_miles,
+    fare_per_minute = trip_total / trip_duration,
+    avg_speed_mph = trip_miles / (trip_duration / 60),
+    
+    
+    same_area = pickup_community_area == dropoff_community_area,
+    
+    tipped = tips > 0,
+    tip_ratio = tips / trip_total,
+    
+    log_trip_total = log1p(trip_total),
+    log_trip_miles = log1p(trip_miles)
+  )
+```
+
+Boxplots for trip duration, trip miles, and fare per mile. We will also plot the distribution of trip duration and trip miles.
+```{r}
+ggplot(df_fe, aes(x = trip_duration)) +
+  geom_boxplot(fill = "steelblue") +
+  labs(x = "Trip Duration (minutes)", y = "Count") +
+  theme_minimal()
+
+ggplot(df_fe, aes(x = trip_miles)) +
+  geom_boxplot(fill = "steelblue") +
   labs(x = "Trip Miles", y = "Count") +
   theme_minimal()
 ```
 ```{r}
-df_clean <- df_clean %>%
-  mutate(speed_mph = trip_miles / (trip_seconds / 3600))
-```
-```{r}
-summary(df_clean$speed_mph)
-unrealistic_speeds <- df_clean %>% filter(speed_mph > 80)
-nrow(unrealistic_speeds)
+ggplot(df_fe, aes(x = trip_duration)) +
+  geom_histogram(fill = "steelblue") +
+  labs(x = "Trip Duration (minutes)", y = "Count") +
+  coord_cartesian(xlim = c(0, 120)) + 
+  theme_minimal()
+
 
 ```
 
 ```{r}
-ggplot(df_clean, aes(x = speed_mph)) +
+ggplot(df_fe, aes(x = trip_miles)) +
+  geom_histogram(bins=300,fill = "steelblue") +
+  labs(x = "Trip Miles", y = "Count") +
+  coord_cartesian(xlim = c(0, 50)) + 
+  theme_minimal()
+
+ggplot(df_fe, aes(x = log_trip_miles)) +
+  geom_histogram(fill = "steelblue") +
+  labs(x = "Trip Miles", y = "Count") +
+  theme_minimal()
+```
+We will remove unrealistic speeds (greater than 80 mph) and check how many rows are removed. We will also plot the distribution of speeds.
+```{r}
+summary(df_fe$avg_speed_mph)
+outlierIndices_speed <- df_fe %>% select(avg_speed_mph) %>% detect_outliers_iqr()
+length(outlierIndices_speed)
+df_fe <- df_fe[-outlierIndices_speed, ]
+```
+```{r}
+summary(df_fe$avg_speed_mph)
+```
+```{r}
+ggplot(df_fe, aes(x = avg_speed_mph)) +
   geom_histogram(bins = 100, fill = "skyblue", alpha = 0.7) +
-  xlim(0, 100) +  # Focus on realistic range, ignoring extreme outliers
+  xlim(0, 80) +
   labs(title = "Distribution of Taxi Speeds (mph)",
        x = "Speed (mph)",
        y = "Number of Trips") +
@@ -124,29 +219,60 @@ ggplot(df_clean, aes(x = speed_mph)) +
 
 
 ```{r}
-df_clean <- df_clean %>% filter(speed_mph > 1, speed_mph <= 80)
-ggplot(df_clean, aes(x = trip_miles, y = trip_seconds / 60)) +
-  geom_point(alpha = 0.3) +
-  labs(x = "Trip Miles", y = "Trip Duration (minutes)") +
-  #coord_cartesian(xlim = c(0, 200)) + 
+ggplot(df_fe, aes(x = trip_miles, y = trip_duration)) +
+  geom_hex(bins = 50) +
+  scale_fill_viridis_c() +
+  labs(x = "Trip Miles", y = "Trip Duration (minutes)", fill = "Count") +
   theme_minimal()
 ```
 
 ```{r}
+summary(df_fe$log_trip_miles)
+summary(df_fe$log_trip_total)
+summary(df_fe$trip_miles)
+summary(df_fe$trip_seconds)
+```
+```{r}
+ggplot(df_fe, aes(x = fare_per_mile)) + 
+  geom_histogram(bins = 50) + 
+  xlim(0, 10) +
+  labs(title = "Fare per Mile")
+
+daily_fare <- df_fe %>%
+  group_by(trip_date) %>%
+  summarise(avg_fare_per_mile = mean(fare_per_mile, na.rm = TRUE))
+
+ggplot(daily_fare, aes(x = trip_date, y = avg_fare_per_mile)) +
+  geom_line(color = "steelblue") +
+  geom_hline(yintercept = mean(daily_fare$avg_fare_per_mile), linetype = "dashed", color = "red") +
+  labs(title = "Daily Average Fare per Mile (2024)", x = "Date", y = "Fare per Mile")
+
+ggplot(df_fe, aes(x = trip_day, y = fare_per_mile)) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(title = "Fare per Mile by Day of Week", x = "Day", y = "Fare per Mile")
+
+top_pairs <- df_fe %>%
+  count(pickup_community_area, dropoff_community_area, sort = TRUE) %>%
+  top_n(20, n)
+
+ggplot(top_pairs, aes(x = factor(pickup_community_area), y = factor(dropoff_community_area), fill = n)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  labs(title = "Top Community Area Pairs by Ride Count", x = "Pickup", y = "Dropoff")
+```
+```{r}
 library(leaflet)
-ggplot(df_clean, aes(x = payment_type, y = tips)) +
+ggplot(df_fe, aes(x = payment_type, y = tips)) +
   geom_boxplot(fill = "orange") +
   labs(x = "Payment Type", y = "Tips (USD)") +
   theme_minimal()
 
-df_clean$hour <- hour(df_clean$trip_end_timestamp)
-
-ggplot(df_clean, aes(x = hour)) +
+ggplot(df_fe, aes(x = trip_hour)) +
   geom_bar(fill = "blue") +
   labs(x = "Hour of Day", y = "Number of Trips") +
   theme_minimal()
 
-df_clean %>%
+df_fe %>%
   group_by(company) %>%
   summarise(total_revenue = sum(trip_total, na.rm = TRUE)) %>%
   arrange(desc(total_revenue)) %>%
@@ -157,7 +283,7 @@ df_clean %>%
   labs(x = "Company", y = "Total Revenue (USD)") +
   theme_minimal()
 
-leaflet(df_clean[1:1000,]) %>%
+leaflet(df_fe[1:1000,]) %>%
   addTiles() %>%
   addCircleMarkers(
     ~pickup_centroid_longitude, ~pickup_centroid_latitude,
@@ -166,7 +292,7 @@ leaflet(df_clean[1:1000,]) %>%
     opacity = 0.5
   )
 
-avg_fare <- df_clean %>%
+avg_fare <- df_fe %>%
   group_by(pickup_community_area) %>%
   summarise(avg_fare = mean(fare, na.rm = TRUE))
 
@@ -184,24 +310,24 @@ ggplot(choropleth_data) +
   labs(title = "Average Fare by Pickup Community Area") +
   theme_minimal()
 
-num_vars <- df_clean %>%
+num_vars <- df_fe %>%
   select(trip_seconds, trip_miles, fare, tips, tolls, extras, trip_total)
 
 corrplot::corrplot(cor(num_vars, use = "complete.obs"), method = "color")
 ```
 
 ```{r}
-rides_origin_count <- df_clean %>%
+rides_origin_count <- df_fe %>%
   group_by(pickup_community_area) %>%
   summarise(origin_count = n()) %>%
   arrange(desc(origin_count))
 
-rides_dest_count <- df_clean %>%
+rides_dest_count <- df_fe %>%
   group_by(dropoff_community_area) %>%
   summarise(dest_count = n()) %>%
   arrange(desc(dest_count))
 
-popular_pairs <- df_clean %>%
+popular_pairs <- df_fe %>%
   group_by(pickup_community_area, dropoff_community_area) %>%
   summarise(pair_count = n()) %>%
   arrange(desc(pair_count))
@@ -236,22 +362,25 @@ top_pairs <- popular_pairs %>%
 edges <- top_pairs %>% 
   select(from = pickup_community_area, to = dropoff_community_area, weight = pair_count)
 
-# Convert to character to avoid igraph warnings
+# Sankey Diagram
 edges$from <- as.character(edges$from)
 edges$to <- as.character(edges$to)
-library(igraph)
-library(ggraph)
-g <- graph_from_data_frame(edges, directed = TRUE)
 
-# Plot using ggraph
-ggraph(g, layout = "fr") +  # Fruchterman-Reingold layout (force-directed)
-  geom_edge_link(aes(width = weight), alpha = 0.8, colour = "steelblue") +
-  geom_node_point(size = 5, color = "tomato") +
-  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
-  scale_edge_width(range = c(0.5, 3)) +
-  labs(title = "Popular Ride Flows Between Community Areas",
-       edge_width = "Number of Rides") +
-  theme_void()
+nodes <- data.frame(name = unique(c(edges$from, edges$to)))
+
+edges_d3 <- edges %>%
+  mutate(source = match(from, nodes$name) - 1,
+         target = match(to, nodes$name) - 1)
+
+sankeyNetwork(Links = edges_d3,
+              Nodes = nodes,
+              Source = "source",
+              Target = "target",
+              Value = "weight",
+              NodeID = "name",
+              fontSize = 12,
+              nodeWidth = 30,
+              sinksRight = FALSE)
 ggplot(top_pairs, aes(x = reorder(paste(pickup_community_area, dropoff_community_area, sep = "→"), pair_count), 
                         y = pair_count, fill = pair_count)) +
   geom_col() +
@@ -263,24 +392,30 @@ ggplot(top_pairs, aes(x = reorder(paste(pickup_community_area, dropoff_community
   theme_minimal()
 ```
 ```{r}
-detect_outliers_iqr <- function(x) {
-  Q1 <- quantile(x, 0.25, na.rm = TRUE)
-  Q3 <- quantile(x, 0.75, na.rm = TRUE)
-  IQR_val <- Q3 - Q1
-  lower <- Q1 - 1.5 * IQR_val
-  upper <- Q3 + 1.5 * IQR_val
-  return(which(x < lower | x > upper))
-}
+average_fare_per_mile_per_day <- df_fe %>%
+  filter(trip_date >= as.Date("2024-01-01") & trip_date <= as.Date("2025-01-01")) %>%
+  group_by(trip_date) %>%
+  summarise(
+    total_fare = sum(trip_total, na.rm = TRUE),
+    total_distance = sum(trip_miles, na.rm = TRUE),
+    avg_fare_per_mile = total_fare / total_distance
+  ) %>%
+  arrange(trip_date)
+yearly_avg <- mean(average_fare_per_mile_per_day$avg_fare_per_mile, na.rm = TRUE)
 
+ggplot(average_fare_per_mile_per_day, aes(x = trip_date, y = avg_fare_per_mile)) +
+  geom_line(color = "blue") +
+  geom_hline(yintercept = yearly_avg, linetype = "dashed", color = "red") +
+  labs(
+    title = "Average Fare per Mile per Day",
+    subtitle = paste("Yearly average fare per mile:", round(yearly_avg, 2)),
+    x = "Date",
+    y = "Average Fare per Mile (USD)"
+  ) +
+  theme_minimal()
 ```
-
 ```{r}
-outlierIndeces <- df  %>% select(trip_total) %>%  detect_outliers_iqr()
-
-outlierLess <- df[-outlierIndeces, ] %>% filter(trip_miles > 0.0 & fare > 0.0 & trip_seconds > 0.0 & !is.na(pickup_census_tract) & !is.na(dropoff_census_tract))
+write.csv(df_fe, "taxi_fare_model_data.csv", row.names = FALSE)
 ```
 
-```{r}
-outlierLess
 
-```
