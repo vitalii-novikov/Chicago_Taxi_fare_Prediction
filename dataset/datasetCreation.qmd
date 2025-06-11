@@ -1,0 +1,292 @@
+---
+title: "DatasetPreparation"
+author: "Nicolas Pozdena BSc."
+format: pdf
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+getFiles <- function(directory_path){
+  all_files <- list.files(path = directory_path, full.names = TRUE)
+  filtered_files <- grep("chicago_taxi_\\d{4}_\\d{2}\\.csv$", all_files, value = TRUE)
+  return(filtered_files)
+}
+
+```
+
+
+```{r}
+cleanDataFrame <- function(df)
+  {
+  
+  
+  
+  columnsToDrop <- c("weekday","tips","tolls","extras","trip_total","count")
+  
+  
+  df <- df %>% select(-any_of(columnsToDrop))
+  
+  existing <- colnames(df)
+  
+  
+  if ("trip_start_timestamp" %in% colnames(df)) {
+    if (!inherits(df$trip_start_timestamp, "POSIXt")) {
+      df$trip_start_timestamp <- as.POSIXct(df$trip_start_timestamp, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+    }
+  }
+  
+  # Map of required columns and their fallback(s)
+  requiredColumns <- list(
+    "trip_start_timestamp" = NULL,
+    "pickup_census_tract_centroid" = "pickup_census_tract",
+    "dropoff_census_tract_centroid" = "dropoff_census_tract",
+    "trip_seconds" = c("trip_start_timestamp", "trip_end_timestamp"),
+    "trip_miles" = NULL,
+    "fare" = NULL,
+    "year" = "trip_start_timestamp",
+    "month" = "trip_start_timestamp",
+    "weekday" = "trip_start_timestamp",
+    "day" = "trip_start_timestamp",
+    "time_decimal" = "trip_start_timestamp"
+  )
+  
+  # Step 1: Define transformation functions
+  createColumnFunctions <- list(
+    "pickup_census_tract_centroid" = function(df) df$pickup_census_tract,
+    "dropoff_census_tract_centroid" = function(df) df$dropoff_census_tract,
+    "trip_seconds" = function(df) as.numeric(difftime(df$trip_end_timestamp, df$trip_start_timestamp, units = "secs")),
+    "year" = function(df) as.integer(format(df$trip_start_timestamp, "%Y")),
+    "month" = function(df) as.integer(format(df$trip_start_timestamp, "%m")),
+    "weekday" = function(df) weekdays(df$trip_start_timestamp),
+    "day" = function(df) as.integer(format(df$trip_start_timestamp, "%d")),
+    "time_decimal" = function(df) {
+      h <- as.numeric(format(df$trip_start_timestamp, "%H"))
+      m <- as.numeric(format(df$trip_start_timestamp, "%M"))
+      s <- as.numeric(format(df$trip_start_timestamp, "%S"))
+      h + m / 60 + s / 3600
+    }
+  )
+  
+  # Step 2: Identify missing & derivable
+  missing <- c()
+  derivable <- c()
+  
+  for (col in names(requiredColumns)) {
+    if (!(col %in% existing)) {
+      sources <- requiredColumns[[col]]
+      if (!is.null(sources) && all(sources %in% existing)) {
+        #print(paste(col, "can be derived from:", paste(sources, collapse = ", ")))
+        derivable <- c(derivable, col)
+      } else {
+        #print(paste(col, "is missing and cannot be derived"))
+        missing <- c(missing, col)
+      }
+    }
+  }
+  
+  # Step 3: Apply transformation functions
+  for (col in derivable) {
+    if (!is.null(createColumnFunctions[[col]])) {
+      df[[col]] <- createColumnFunctions[[col]](df)
+      message(paste("Derived and added column:", col))
+    } else {
+      warning(paste("No function defined to derive", col))
+    }
+  }
+  
+  return(df)
+}
+
+```
+
+```{r}
+get_balanced_subset <- function(df, class_columns, n_rows) {
+  if (length(class_columns) == 0) {
+    stop("At least one class column must be specified.")
+  }
+  
+
+  if (n_rows > nrow(df)) {
+    warning("Requested more rows than available; returning full dataframe.")
+    return(df)
+  }
+  
+
+  # Group by class columns and count group sizes
+  grouped <- df %>% group_by(across(all_of(class_columns)))
+  group_counts <- grouped %>% summarise(count = n(), .groups = "drop")
+  
+
+  # Calculate number of groups and base allocation
+  n_groups <- nrow(group_counts)
+  
+  
+  base_n <- floor(n_rows / n_groups)
+  
+  remainder <- n_rows %% n_groups
+
+  # Allocate rows per group (with remainder spread evenly)
+  group_counts <- group_counts %>%
+    mutate(allocated = base_n + ifelse(row_number() <= remainder, 1, 0))
+
+  # Join allocation with original data
+  df_with_key <- df %>%
+    mutate(.grp_key = interaction(across(all_of(class_columns)), drop = TRUE))
+
+  group_counts <- group_counts %>%
+    mutate(.grp_key = interaction(across(all_of(class_columns)), drop = TRUE))
+
+  # Sample rows per group
+  result <- lapply(1:nrow(group_counts), function(i) {
+    key <- group_counts$.grp_key[i]
+    k <- group_counts$allocated[i]
+
+    group_rows <- df_with_key %>%
+      filter(.grp_key == key)
+
+    # Handle case where group has fewer rows than needed
+    if (nrow(group_rows) < k) {
+      warning(paste("Group", key, "has only", nrow(group_rows), "rows; using all."))
+      return(group_rows)
+    } else {
+      return(group_rows %>% sample_n(k))
+    }
+  })
+
+  # Combine and return
+  bind_rows(result) %>% select(-.grp_key)
+}
+
+```
+
+
+```{r}
+generate_linear_sum <- function(difference, n, total) {
+  
+  step <- total/n
+  
+  adjuster <- seq(from=difference, to=-difference, length.out=n)
+  
+  y = c()
+  for(a in adjuster)
+  {
+    y = append(y,round(step + step*a))
+  }
+
+  return(rev(y))
+}
+```
+
+
+```{r}
+generateDataSet <- function(total, pathToFolder, stratColumns, outputFile) {
+  files <- getFiles(pathToFolder)
+  timespan <- length(files)
+  
+  # Generate the linear distribution of amount over time
+  amount <- generate_linear_sum(0.3, timespan, total)
+  
+  completeDataframe <- data.frame()
+  
+  for (counter in seq_along(files)) {
+    
+    f <- files[counter]
+    print(paste0("Working on ", f, " for ",amount[counter], " rows"))
+    data <- read.csv(f)
+    data <- cleanDataFrame(data)
+    
+    # Balance and sample rows
+    n_sample <- as.integer(amount[counter])
+    data <- get_balanced_subset(data, stratColumns, n_sample)
+    
+    completeDataframe <- bind_rows(completeDataframe, data)
+  }
+  
+  write.csv(completeDataframe, outputFile, row.names = FALSE)
+}
+
+```
+
+
+```{r}
+generateDataSet(10000, "../all_data", c("time_decimal"), "../all_data/datasets/dsSmall.csv")
+generateDataSet(50000, "../all_data", c("time_decimal"), "../all_data/datasets/dsMedium.csv")
+generateDataSet(100000, "../all_data", c("time_decimal"), "../all_data/datasets/dsLarge.csv")
+generateDataSet(500000, "../all_data", c("time_decimal"), "../all_data/datasets/dsXtraLarge.csv")
+
+```
+
+```{r}
+plot_columns_auto <- function(df, max_unique_cats = 20, exclude = NULL) {
+  plots <- list()
+  
+  # Filter out excluded columns
+  include_cols <- setdiff(colnames(df), exclude)
+
+  for (colname in include_cols) {
+    coldata <- df[[colname]]
+    p <- NULL
+
+    if (is.numeric(coldata)) {
+      p <- ggplot(df, aes_string(x = colname)) +
+        geom_density(fill = "skyblue", alpha = 0.6) +
+        labs(title = paste("Density of", colname), x = colname) +
+        theme_minimal() +
+        theme(plot.margin = margin(10, 10, 10, 10))
+      
+    } else if (is.factor(coldata) || is.character(coldata)) {
+      nunique <- length(unique(coldata))
+      if (nunique <= max_unique_cats) {
+        p <- ggplot(df, aes_string(x = colname)) +
+          geom_bar(fill = "orange", alpha = 0.8) +
+          labs(title = paste("Barplot of", colname), x = colname) +
+          theme_minimal() +
+          theme(plot.margin = margin(10, 10, 10, 10))
+      } else {
+        message(paste("Skipping", colname, "- too many unique values (", nunique, ")"))
+      }
+
+    } else {
+      message(paste("Skipping", colname, "- unsupported type:", class(coldata)))
+    }
+
+    if (!is.null(p)) {
+      plots[[colname]] <- p
+    }
+  }
+
+  # Display plots one per row, full width
+  for (p in plots) {
+    print(p)
+    cat("\n\n")  # spacing between plots in console
+  }
+
+  return(invisible(plots))
+}
+```
+
+
+```{r}
+newDataset <- read.csv("../all_data/datasets/dsLarge.csv")
+centroids <- read.csv("../all_data/census_centroids.csv")
+
+centroids <- centroids %>% filter(!is.na(centroid_latitude) & !is.na(centroid_longitude)) %>% mutate(pickup_census_tract = census_tract, dropoff_census_tract = census_tract)
+
+withCoords <- join(newDataset,centroids, by="pickup_census_tract", type="left") %>%  mutate(pickup_centroid_latitude = centroid_latitude, pickup_centroid_longitude = centroid_longitude)%>% select(-census_tract,-X, -centroid_latitude, -centroid_longitude)
+
+withCoords <- join(withCoords, centroids, by="dropoff_census_tract", type="left") %>% mutate(dropoff_centroid_latitude = centroid_latitude, dropoff_centroid_longitude = centroid_longitude)%>% select(-census_tract,-X, -centroid_latitude, -centroid_longitude)
+
+
+
+
+
+withCoords <- withCoords %>% filter(!is.na(dropoff_centroid_latitude) | is.na(!pickup_centroid_longitude))
+
+write.csv(withCoords, "../all_data/datasets/dsLarge.csv")
+
+```

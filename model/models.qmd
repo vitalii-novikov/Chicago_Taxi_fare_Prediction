@@ -106,11 +106,11 @@ showPredictions <- function(predict, test, model) {
 
 ## loading dataset
 
-
 ```{r}
 df <- load_all_csv("../all_data")
 
 ```
+
 ```{r}
 reducedDf <- df %>% 
   select(
@@ -196,8 +196,8 @@ test <- mD[-train_index, ]
 form <- fare ~ .
 ```
 
-
 ### Neural Net
+
 ```{r}
 
 
@@ -219,13 +219,13 @@ showPredictions(pred_nn, test$fare, "Neural Net")
 ```
 
 ### GLM
+
 ```{r}
 model_glm <- glm(form, data=train)
 pred_glm <- predict(model_glm, newdata=test)
 
 showPredictions(pred_glm, test$fare, "GLM")
 ```
-
 
 ### XGBoost
 
@@ -242,8 +242,8 @@ showPredictions(pred_xgb, y_test, "XGBoost")
 
 ```
 
-
 ### Random Forest
+
 ```{r}
 model_rf <- randomForest(form, data=train)
 pred_rf <- predict(model_rf, newdata=test)
@@ -252,6 +252,7 @@ showPredictions(pred_rf, test$fare, "Random Forrest")
 ```
 
 ### LM
+
 ```{r}
 model_lm <- lm(form, data=train)
 pred_lm <- predict(model_lm, newdata=test)
@@ -260,7 +261,7 @@ showPredictions(pred_lm, test$fare, "Linear Model")
 
 ```
 
-## percentage test 
+## percentage test
 
 ```{r}
 set.seed(123)
@@ -348,6 +349,7 @@ for (p in percentages) {
 # Show results
 print(results)
 ```
+
 ```{r}
 
 results %>%
@@ -362,6 +364,7 @@ results %>%
   theme_minimal()
 
 ```
+
 ```{r}
 
 metric_deltas_scaled <- results %>% filter(rows != 20827) %>%
@@ -382,4 +385,90 @@ metric_deltas_scaled <- results %>% filter(rows != 20827) %>%
     time_per_10k = mean(delta_time/ delta_rows * 10000, na.rm = TRUE)
   )
 metric_deltas_scaled
+```
+
+
+
+```{r}
+evaluate_model <- function(y, duration_seconds, prediction) {
+  if (length(y) != length(prediction) || length(y) != length(duration_seconds)) {
+    stop("All input vectors must have the same length.")
+  }
+
+  # Convert duration from seconds to minutes
+  duration_minutes <- duration_seconds / 60
+  
+  # Metric 1: RMSE scaled to 10 minutes
+  # Compute squared errors
+  squared_errors <- (y - prediction)^2
+  
+  # Scale errors per 10 minutes
+  scaling_factors <- 10 / duration_minutes
+  rmse_10min <- sqrt(mean(squared_errors * scaling_factors^2, na.rm = TRUE))
+  
+  # Metric 2: Mean Absolute Error as percentage of true value
+  ae_percent <- abs(y - prediction) / y
+  mean_ae_percent <- mean(ae_percent, na.rm = TRUE)
+  
+  # Return results
+  list(
+    RMSE_10min = rmse_10min,
+    RMSE_10min_OK = rmse_10min < 2,
+    Mean_AE_percent = mean_ae_percent,
+    Mean_AE_percent_OK = mean_ae_percent < 0.05
+  )
+}
+
+```
+
+
+
+
+```{r}
+loadDataSets <- function(folderPath){
+  files <- list.files(folderPath, full.names = TRUE)
+  ds <- list()  # Initialize as list to hold data frames
+  for (f in files) {
+    print(f)
+    data <- read.csv(f)
+    ds[[f]] <- data  # Store each data frame in list, named by file path
+  }
+  return(ds)
+}
+
+```
+
+
+
+```{r}
+
+datas <- loadDataSets("../all_data/datasets")
+
+for (name in names(datas)) {
+  d <- datas[[name]]
+  d <- d %>% select(-trip_start_timestamp, -weekday, -pickup_census_tract_centroid, -dropoff_census_tract_centroid)
+  # Split into train/test
+  set.seed(42)
+  train_index <- sample(1:nrow(d), 0.8 * nrow(d))
+  train <- d[train_index, ]
+  test <- d[-train_index, ] 
+  
+  # Train linear model
+  linearModel <- lm(fare ~ ., data = train)
+  print("linear model trained")
+  
+  
+  # Predict on test set
+  predictions <- predict(linearModel, newdata = test%>%select(-fare))
+  print("predictions")
+  
+  # Evaluate metrics
+  results <- evaluate_model(y = test$fare,
+                            duration_seconds = test$trip_seconds,  # adjust column name if needed
+                            prediction = predictions)
+  
+  cat(sprintf("Results for %s:\n", name))
+  print(results)
+  cat("\n")
+}
 ```

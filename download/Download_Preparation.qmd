@@ -30,160 +30,174 @@ ensureLibrary("purrr")
 
 ## Download
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-```{r}
-# setup
-years = 2014:2023
-base_url = "https://data.cityofchicago.org/resource/wrvz-psew.json"
-limit = 50000
-```
-
 ```{r}
 
-cols_to_drop <- c(
-  "trip_id", 
-  "taxi_id",
-  "pickup_centroid_location",
-  "dropoff_centroid_location",
-  "payment_type",
-  "company",
-  "pickup_centroid_lingitude",
-  "pickup_centroid_latitude",
-  "dropoff_centroid_longitude",
-  "dropoff_centroid_latitude"
-)
 
 
 clean_chunk <- function(df) {
+  
+    cols_to_drop <- c(
+    "trip_id", 
+    "taxi_id",
+    "payment_type",
+    "company",
+    "trip_end_timestamp",
+    "tips",
+    "tolls",
+    "extras",
+    "trip_total",
+    "pickup_community_area",
+    "dropoff_community_area"
+  )
+  
+  
   df <- df %>%
     select(-any_of(cols_to_drop)) %>%
+    mutate(across(c(trip_seconds, trip_miles, fare),  as.numeric)) %>%
     mutate(
-      trip_seconds = as.numeric(trip_seconds),
-      trip_miles = as.numeric(trip_miles),
-      fare = as.numeric(fare),
-      tips = as.numeric(tips),
-      tolls = as.numeric(tolls),
-      extras = as.numeric(extras),
-      trip_total = as.numeric(trip_total),
-      pickup_community_area = as.integer(pickup_community_area),
-      dropoff_community_area = as.integer(dropoff_community_area),
-      trip_start_timestamp = ymd_hms(trip_start_timestamp),
-      trip_end_timestamp = ymd_hms(trip_end_timestamp)
+      trip_start_timestamp = ymd_hms(trip_start_timestamp)
+    ) %>%
+    filter(
+      if_all(c(trip_seconds, trip_miles, fare), ~ !is.na(.) & . > 0),
+      !is.na(trip_start_timestamp)
+    ) %>%
+    mutate(
+      speed_mph = (trip_miles / (trip_seconds / 3600)),
+      valid_speed = speed_mph >= 1 & speed_mph <= 70
+    ) %>%
+    filter(valid_speed) %>%
+    transmute(
+      trip_start_timestamp,
+      pickup_census_tract,
+      dropoff_census_tract,
+      pickup_centroid_location,
+      dropoff_centroid_location,
+      trip_seconds,
+      trip_miles,
+      fare,
+      year = year(trip_start_timestamp),
+      month = month(trip_start_timestamp),
+      weekday = wday(trip_start_timestamp, label = TRUE),
+      time_decimal = hour(trip_start_timestamp) + minute(trip_start_timestamp) / 60 + second(trip_start_timestamp) / 3600
     )
+  
   return(df)
+}
+
+getData <- function(years, months = 1:12)
+{
+  limit = 50000
+  base_url = "https://data.cityofchicago.org/resource/wrvz-psew.json"
+  for (year in years) {
+    for (month in months) {
+      start_date <- sprintf("%04d-%02d-01T00:00:00", year, month)
+      end_date <- if (month == 12) {
+        sprintf("%04d-01-01T00:00:00", year + 1)
+      } else {
+        sprintf("%04d-%02d-01T00:00:00", year, month + 1)
+      }
+      
+      print(start_date)
+      print(end_date)
+  
+      offset <- 0
+      all_data <- list()
+  
+      cat("Downloading:", year, month, "\n")
+  
+      repeat {
+        resp <- GET(
+          url = base_url,
+          query = list(
+            `$where` = paste0(
+              "trip_start_timestamp >= '", start_date, "' AND ",
+              "trip_start_timestamp < '", end_date, "' AND ",
+              "trip_miles > 0 AND fare > 0 AND trip_seconds > 0 AND ",
+              "pickup_census_tract IS NOT NULL AND dropoff_census_tract IS NOT NULL"
+            ),
+            `$limit` = limit,
+            `$offset` = format(offset, scientific = FALSE)
+          )
+        )
+  
+        if (status_code(resp) != 200) {
+          warning("API error at ", year, "-", month, " offset ", offset)
+          break
+        }
+  
+        data_chunk <- fromJSON(rawToChar(resp$content))
+        cat(sprintf("  Rows downloaded in chunk: %d\n", nrow(data_chunk)))
+        
+        if (length(data_chunk) == 0) break
+  
+        clean_data <- clean_chunk(data_chunk)
+        all_data[[length(all_data) + 1]] <- clean_data
+  
+        cat(sprintf("  Rows downloaded so far: %d\n", length(all_data)))
+        offset <- offset + limit
+      }
+  
+      if (length(all_data) > 0) {
+        final_data <- bind_rows(all_data)
+  
+        cat("--------------------\n")
+        cat(sprintf("Cleaned final data for %04d-%02d: %d rows\n", year, month, nrow(final_data)))
+        cat("--------------------\n")
+        
+        
+        # Remove all list or matrix columns
+        final_data <- final_data[, !sapply(final_data, function(col) is.list(col) || is.matrix(col))]
+        
+        # Optionally: coerce columns like weekday (which might be ordered factors) into characters
+        final_data <- final_data %>%
+          mutate(across(where(is.factor), as.character))
+          
+        dir.create("../all_data", showWarnings = FALSE, recursive = TRUE)
+        file_name <- sprintf("../all_data/chicago_taxi_%04d_%02d.csv", year, month)
+        write_csv(final_data, file_name)
+        cat("  ✔ Saved:", file_name, "\n")
+      } else {
+        cat("  ⚠ No usable data for:", year, month, "\n")
+      }
+    }
+  }
 }
 ```
 
 ```{r}
-for (year in years) {
-  for (month in 1:12) {  # You can replace c(1) with 1:12 for full-year
+find_missing_files_by_year <- function(folder_path) {
+  # Generate expected year-month combinations
+  years <- 2013:2023
+  months <- 1:12
+  expected <- expand.grid(year = years, month = months)
+  
+  # Format expected filenames
+  expected$filename <- sprintf("chicago_taxi_%d_%02d.csv", expected$year, expected$month)
+  
+  # List actual files in folder
+  actual_files <- list.files(folder_path)
+  
+  # Find which are missing
+  missing <- expected[!(expected$filename %in% actual_files), ]
+  
+  # Group by year and return list of months
+  missing_list <- split(missing$month, missing$year)
+  
+  return(missing_list)
+}
 
-    # Create time range for the full month
-    start_date <- sprintf("%04d-%02d-01T00:00:00", year, month)
-    if (month == 12) {
-      end_date <- sprintf("%04d-01-01T00:00:00", year + 1)
-    } else {
-      end_date <- sprintf("%04d-%02d-01T00:00:00", year, month + 1)
-    }
+# Example usage
+folder <- "../all_data"  # adjust path
+missing <- find_missing_files_by_year(folder)
 
-    offset <- 0L
-    all_data <- list()
-    finished <- FALSE
 
-    cat("Downloading:", year, month, "\n")
+```
 
-    while (!finished) {
-      resp <- GET(
-        url = base_url,
-        query = list(
-          `$where` = paste0(
-            "trip_start_timestamp >= '", start_date, "' AND ",
-            "trip_start_timestamp < '", end_date, "' AND ",
-            "trip_miles > 0 AND fare > 0 AND trip_seconds > 0 AND ",
-            "pickup_census_tract IS NOT NULL AND dropoff_census_tract IS NOT NULL"
-          ),
-          `$limit` = limit,
-          `$offset` = as.integer(offset)
-        )
-      )
-
-      if (status_code(resp) != 200) {
-        print(resp$url)
-        warning("API error at ", year, "-", month, " offset ", offset)
-        break
-      }
-
-      data_chunk <- fromJSON(rawToChar(resp$content))
-
-      if (length(data_chunk) == 0) {
-        finished <- TRUE
-        break
-      }
-
-      clean_data <- clean_chunk(data_chunk)
-      all_data[[length(all_data) + 1]] <- clean_data
-
-       cat(sprintf("  Rows downloaded: %d\n", offset + nrow(clean_data)))
-      offset <- offset + limit
-    }
-
-    if (length(all_data) > 0) {
-      monthly_data <- bind_rows(all_data)
-
-      # Clean timestamps
-      cleaned_data <- monthly_data %>% 
-        filter(!is.na(trip_start_timestamp)) %>%
-        mutate(
-          trip_start_timestamp = suppressWarnings(ymd_hms(trip_start_timestamp))
-        ) %>%
-        filter(!is.na(trip_start_timestamp), !is.na(trip_end_timestamp)) %>%
-        mutate(
-          trip_start_timestamp = floor_date(trip_start_timestamp, unit = "15 minutes")
-        )
-      # Select and aggregate
-      final_data <- cleaned_data %>%
-        select(
-          trip_start_timestamp,
-          pickup_census_tract,
-          dropoff_census_tract,
-          trip_seconds,
-          trip_miles,
-          fare,
-          tips,
-          tolls,
-          extras,
-          trip_total
-        ) %>%
-        group_by(
-          trip_start_timestamp,
-          pickup_census_tract,
-          dropoff_census_tract
-        ) %>%
-        summarise(
-          trip_seconds = mean(as.numeric(trip_seconds), na.rm = TRUE),
-          trip_miles   = mean(as.numeric(trip_miles), na.rm = TRUE),
-          fare         = mean(as.numeric(fare), na.rm = TRUE),
-          tips         = mean(as.numeric(tips), na.rm = TRUE),
-          tolls        = mean(as.numeric(tolls), na.rm = TRUE),
-          extras       = mean(as.numeric(extras), na.rm = TRUE),
-          trip_total   = mean(as.numeric(trip_total), na.rm = TRUE),
-          count        = n(),
-          .groups = "drop"
-        )
-
-      print("--------------------")
-      print(paste0("Data for month total: ", nrow(monthly_data)))
-      print(paste0("cleaned Data for month: ",nrow(cleaned_data)))
-      print(paste0("finald Data for month: ",nrow(final_data), " Reduction by ", round((1-nrow(final_data)/nrow(monthly_data))*100,2), "%"))
-      print("--------------------")
-
-      file_name <- sprintf("../all_data/chicago_taxi_%04d_%02d.csv", year, month)
-      write_csv(final_data, file_name)
-      cat("  ✔ Saved:", file_name, "- Total rows:", nrow(final_data), "\n")
-    } else {
-      cat("  ⚠ No data for:", year, month, "\n")
-    }
+```{r}
+for (year in names(missing)) {
+  months <- missing[[year]]
+  if (length(months) > 0) {
+    getData(c(as.integer(year)), months)
   }
 }
 ```
