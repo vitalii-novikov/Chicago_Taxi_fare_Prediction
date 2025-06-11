@@ -37,74 +37,128 @@ ensureLibrary("Metrics")
 ```{r echo: false}
 load_all_csv <- function(folder_path) {
   
-
-  files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+ files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
 
   if (length(files) == 0) {
     warning("No CSV files found in the folder.")
     return(NULL)
   }
 
-  all_data <- lapply(files, function(file) {
-    temp <- read_csv(file, show_col_types = FALSE)
-    print(paste("Rows before filtering:", nrow(temp)))
-    return(temp)
-  }) %>%
-    bind_rows()
+  all_data <- list()
+  
+  for (f in files) {
+    temp <- read.csv(f)
+    temp <- temp%>% select(-X, -trip_start_timestamp, -pickup_census_tract, -dropoff_census_tract, -pickup_census_tract_centroid, -dropoff_census_tract_centroid, -type, -dropoff_census_tract.1, -pickup_census_tract.1) %>% mutate(weekday = as.factor(weekday))
+    all_data[[f]] <- temp  # use filename as list name (optional but useful)
+  }
 
   return(all_data)
 }
 
-showPredictions <- function(predict, test, model) {
-  # Ensure numeric vectors
-  predict <- as.numeric(predict)
-  test <- as.numeric(test)
-  
-  # Calculate metrics
-  rmse_val <- rmse(test, predict)
-  mae_val <- mae(test, predict)
-  r2_val <- 1 - sum((test - predict)^2) / sum((test - mean(test))^2)
+evaluate_and_plot_full_model <- function(y, duration_seconds, prediction, model = "Model", dataset = "Dataset") {
+  if (length(y) != length(prediction) || length(y) != length(duration_seconds)) {
+    stop("All input vectors must have the same length.")
+  }
 
-  # Prepare metrics for plotting
-  metrics_df <- data.frame(
+  # Convert inputs
+  y <- as.numeric(y)
+  prediction <- as.numeric(prediction)
+  duration_minutes <- duration_seconds / 60
+
+  # --- Metrics ---
+  valid_idx <- which(!is.na(y) & !is.na(prediction) & !is.na(duration_minutes) & y != 0)
+  y_valid <- y[valid_idx]
+  prediction_valid <- prediction[valid_idx]
+  duration_valid <- duration_minutes[valid_idx]
+
+  rmse_val <- tryCatch(rmse(y_valid, prediction_valid), error = function(e) NA)
+  mae_val <- tryCatch(mae(y_valid, prediction_valid), error = function(e) NA)
+  r2_val <- tryCatch(1 - sum((y_valid - prediction_valid)^2) / sum((y_valid - mean(y_valid))^2), error = function(e) NA)
+
+  squared_errors <- (y_valid - prediction_valid)^2
+  scaling_factors <- 10 / duration_valid
+  rmse_10min <- sqrt(mean(squared_errors * scaling_factors^2, na.rm = TRUE))
+
+  ae_percent <- abs(y_valid - prediction_valid) / y_valid
+  mean_ae_percent <- mean(ae_percent, na.rm = TRUE)
+
+  is_ok <- (rmse_10min < 2) & (mean_ae_percent < 0.05)
+
+  # --- Plots ---
+
+  # 1. Prediction vs Actual
+  p_pred <- ggplot(data.frame(y = y_valid, prediction = prediction_valid), aes(x = y, y = prediction)) +
+    geom_point(color = "steelblue", alpha = 0.6) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      title = paste(model, "Predictions"),
+      subtitle = paste0("(N = ", length(y_valid), ")"),
+      x = "Actual",
+      y = "Predicted"
+    ) +
+    theme_minimal()
+
+  # 2. Metric bar chart
+  metric_df <- data.frame(
     Metric = c("RMSE", "MAE", "R²"),
     Value = c(rmse_val, mae_val, r2_val)
   )
 
-  # Scatter plot
-  gp1 <- ggplot() + 
-    aes(x = test, y = predict) +
-    geom_point(color = "steelblue", alpha = 0.6) +
-    coord_equal(xlim = c(0, 200), ylim = c(0, 200)) +
-    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-    labs(
-      title = paste(model, "Predictions"),
-      subtitle = paste0("(N = ", length(predict), ")"),
-      x = "Actual Fare",
-      y = "Predicted Fare"
-    ) +
-    theme_minimal()
-
-  # Bar chart of metrics
-  gp2 <- ggplot(metrics_df, aes(x = Metric, y = Value, fill = Metric)) +
+  p_metrics <- ggplot(metric_df, aes(x = Metric, y = Value, fill = Metric)) +
     geom_col(width = 0.6, show.legend = FALSE) +
     geom_text(aes(label = round(Value, 2)), vjust = -0.5, size = 4) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.4))) +
     labs(
       title = "Model Evaluation Metrics",
       y = NULL, x = NULL
     ) +
-    theme_minimal() +
-    ylim(0, max(metrics_df$Value) * 1.2)
+    theme_minimal()
 
-  # Combine and return both plots
-  return(gp1 + gp2)
+  # 3. Summary: RMSE 10min vs %AE
+  summary_df <- data.frame(
+    RMSE_10min = rmse_10min,
+    Mean_AE_percent = mean_ae_percent,
+    Status = ifelse(is_ok, "OK", "Not OK")
+  )
+
+  p_summary <- ggplot(summary_df, aes(x = RMSE_10min, y = Mean_AE_percent)) +
+    geom_point(aes(color = Status), size = 5) +
+    geom_vline(xintercept = 2, linetype = "dashed", color = "black") +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    scale_color_manual(values = c("OK" = "green", "Not OK" = "red")) +
+    labs(
+      title = "Evaluation: Scaled RMSE vs % Error",
+      x = "RMSE (scaled to 10 min)",
+      y = "Mean Absolute Error (%)"
+    ) +
+    theme_minimal()
+
+  # 4. Individual error scatter
+  individual_df <- data.frame(
+    AbsoluteError_10min = abs(y_valid - prediction_valid) * (10 / duration_valid),
+    PercentError = ae_percent
+  )
+
+  p_individual <- ggplot(individual_df, aes(x = AbsoluteError_10min, y = duration_valid)) +
+    geom_point(alpha = 0.6, color = "blue") +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    labs(
+      title = "Individual Errors",
+      x = "Absolute Error (scaled to 10 min)",
+      y = "duration in minutes"
+    ) +
+    theme_minimal()
+
+  # --- Combine plots ---
+  combined_plot <- (p_pred | p_metrics) / (p_summary | p_individual)
+  return(combined_plot)
 }
-
 ```
 
 # Modelling
 
 ## loading dataset
+
 
 ```{r}
 df <- load_all_csv("../all_data")
@@ -389,6 +443,7 @@ metric_deltas_scaled
 
 
 
+
 ```{r}
 evaluate_model <- function(y, duration_seconds, prediction) {
   if (length(y) != length(prediction) || length(y) != length(duration_seconds)) {
@@ -472,3 +527,100 @@ for (name in names(datas)) {
   cat("\n")
 }
 ```
+
+```{r}
+
+remove_outliers_z <- function(df, feature1, feature2, threshold = 3) {
+  z1 <- abs(scale(df[[feature1]]))
+  z2 <- abs(scale(df[[feature2]]))
+  
+  df_clean <- df[(z1 < threshold) & (z2 < threshold), ]
+  return(df_clean)
+}
+
+```
+
+
+```{r}
+df <- load_all_csv("../all_data/datasets")
+form <- fare ~ .
+percentage <- 0.8
+```
+
+
+```{r}
+models <- list(
+   "XGBOOST" = xgboost,
+  "GLM" = glm,
+  "LM" = lm
+)
+
+for (ds in rev(names(df))) {
+    dataSet <- df[[ds]] %>% filter(trip_seconds > 60)
+    dataSet$weekday <- as.numeric(factor(dataSet$weekday))
+    dataSet <- remove_outliers_z(dataSet, "fare", "trip_seconds", 2)
+    train_index <- sample(1:nrow(dataSet), percentage * nrow(dataSet))
+    train <- dataSet[train_index, ]
+    test <- dataSet[-train_index, ]
+    
+     # Extract target and clean test set
+    y <- test$fare
+  
+  for (m in names(models)) {
+    print(paste0("Working on ", m , " with ", ds))
+    
+    model_obj <- NULL
+    pred <- NULL
+    
+     tryCatch({
+      if (m == "XGBOOST") {
+          train_clean <- train %>% drop_na()
+          test_clean <- test %>% drop_na()
+        
+          xform <- fare ~ . - 1  # consistent formula without intercept
+
+          train_matrix <- model.matrix(xform, data = train_clean)
+          test_matrix <- model.matrix(xform, data = test_clean)
+        
+          # Prepare labels and durations
+          train_labels <- train_clean$fare
+          test_labels <- test_clean$fare
+          test_durations <- test_clean$trip_seconds
+        
+          # DMatrix conversion
+          dtrain <- xgb.DMatrix(data = train_matrix, label = train_labels)
+          dtest <- xgb.DMatrix(data = test_matrix)
+        
+          # Train
+          params <- list(objective = "reg:squarederror", eta = 0.1, max_depth = 6)
+          model_obj <- xgboost(data = dtrain, params = params, nrounds = 100, verbose = 0)
+        
+          # Predict
+          pred <- predict(model_obj, dtest)
+        
+          # Evaluate
+          print(evaluate_and_plot_full_model(
+            y = test_labels,
+            duration_seconds = test_durations,
+            prediction = pred,
+            model = m,
+            dataset = ds
+          ))
+      } else {
+        model_func <- models[[m]]
+        model_obj <- model_func(form, data = train, na.action = na.omit)
+        pred <- predict(model_obj, newdata = test %>% select(-fare))
+        print(evaluate_and_plot_full_model(y, test$trip_seconds, pred, model = m, dataset = ds))
+      }
+    
+    
+    # Plot evaluation
+    
+     }, error = function(e) {
+      cat(paste0("❌ Error with model ", m, " on dataset ", ds, ": ", e$message, "\n"))
+    })
+  }
+
+}
+```
+

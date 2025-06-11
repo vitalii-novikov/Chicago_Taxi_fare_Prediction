@@ -1,0 +1,286 @@
+---
+title: "LM_Model"
+author: "Amar Wadhwani"
+date: "2025-06-08"
+output: html_document
+---
+```{r}
+
+ensureLibrary <- function(pkg) {
+  suppressPackageStartupMessages({
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg)
+    }
+    library(pkg, character.only = TRUE)
+  })
+}
+
+ensureLibrary("biglm")
+ensureLibrary("slurmR")
+ensureLibrary("doParallel")
+ensureLibrary("parallel")
+ensureLibrary("caret")
+ensureLibrary("e1071")
+ensureLibrary("ROCR")
+ensureLibrary("httr")
+ensureLibrary("jsonlite")
+ensureLibrary("dplyr")
+ensureLibrary("tidyr")
+ensureLibrary("lubridate")
+ensureLibrary("ggplot2")
+ensureLibrary("readr")
+ensureLibrary("caret")
+ensureLibrary("purrr")
+ensureLibrary("ggplot2")
+ensureLibrary("neuralnet")
+ensureLibrary("xgboost")
+ensureLibrary("randomForest")
+ensureLibrary("patchwork")
+ensureLibrary("Metrics")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r lm_model}
+df <- read_csv("./eda/taxi_fare_model_data.csv")
+str(df)
+nrow(df)
+```
+
+We have 2 million rows for the year 2024, which have pre-processed during our EDA.
+We will now select the relevant features, convert them to factors where appropriate.
+```{r}
+df_model <- df %>%
+  select(
+    fare,
+    trip_hour,
+    trip_day,
+    trip_month,
+    is_weekend,
+    is_rush_hour,
+    trip_duration,
+    trip_miles,
+    pickup_community_area,
+    dropoff_community_area,
+    pickup_census_tract,
+    dropoff_census_tract
+  ) %>%
+  mutate(
+    trip_day = as.factor(trip_day),
+    trip_month = as.factor(trip_month),
+    is_weekend = as.factor(is_weekend),
+    is_rush_hour = as.factor(is_rush_hour),
+    pickup_community_area = as.factor(pickup_community_area),
+    dropoff_community_area = as.factor(dropoff_community_area),
+    pickup_census_tract = as.factor(pickup_census_tract),
+    dropoff_census_tract = as.factor(dropoff_census_tract)
+  ) %>%
+  na.omit()
+```
+
+We now train the model on train dataset and will test the predictions
+```{r}
+set.seed(42)
+factor_vars <- c(
+  "trip_day", "trip_month", "is_weekend", "is_rush_hour",
+  "pickup_community_area", "dropoff_community_area",
+  "pickup_census_tract", "dropoff_census_tract"
+)
+df_sample <- df_model %>% sample_frac(0.5)
+getTrainAndTestSamples_BalancedFactors <- function(data, percentTrain = 0.75, seed = 42, replaceIfRare = TRUE) {
+  set.seed(seed)
+
+  if (!is.data.frame(data)) stop("Input `data` must be a data frame.")
+
+  factor_vars <- names(Filter(is.factor, data))
+  
+  # Initialize train and test sets
+  train_list <- list()
+  test_list <- list()
+
+  # For each factor column, ensure all levels appear in both sets
+  for (col in factor_vars) {
+    levels_col <- levels(data[[col]])
+    
+    for (lvl in levels_col) {
+      # Subset rows where this level occurs
+      rows_with_level <- data[data[[col]] == lvl, ]
+      n <- nrow(rows_with_level)
+
+      if (n == 1) {
+        # Only one occurrence — put it in both sets if allowed
+        if (replaceIfRare) {
+          train_list[[length(train_list) + 1]] <- rows_with_level
+          test_list[[length(test_list) + 1]] <- rows_with_level
+        } else {
+          warning(sprintf("Skipping rare level '%s' in column '%s' (only 1 instance)", lvl, col))
+        }
+      } else {
+        # Sample index for train set
+        idx <- sample(seq_len(n), size = floor(n * percentTrain), replace = FALSE)
+        train_list[[length(train_list) + 1]] <- rows_with_level[idx, ]
+        test_list[[length(test_list) + 1]] <- rows_with_level[-idx, ]
+      }
+    }
+  }
+
+  # Combine factor-balanced subsets
+  train_df <- do.call(rbind, train_list)
+  test_df  <- do.call(rbind, test_list)
+
+  # Remove potential duplicate rows introduced by overlapping rare levels
+  train_df <- unique(train_df)
+  test_df  <- unique(test_df)
+
+  # Add back any remaining rows not included above
+  all_ids <- paste0(rownames(train_df), "_train") # to track uniqueness
+  all_ids <- c(all_ids, paste0(rownames(test_df), "_test"))
+
+  rest <- data[!rownames(data) %in% unique(c(rownames(train_df), rownames(test_df))), ]
+  rest_n <- nrow(rest)
+  if (rest_n > 0) {
+    idx_rest <- sample(seq_len(rest_n), size = floor(rest_n * percentTrain))
+    train_df <- rbind(train_df, rest[idx_rest, ])
+    test_df  <- rbind(test_df, rest[-idx_rest, ])
+  }
+
+  return(list(train = train_df, test = test_df))
+}
+
+stratified_train_test_split <- function(data, target_frac = 0.8,
+                                        factor_cols = NULL,
+                                        numeric_cols = NULL,
+                                        bins = 4,
+                                        min_stratum_size = 5,
+                                        seed = 42) {
+  set.seed(seed)
+
+  df <- data
+
+  # Combine factor and binned numeric columns to create strata
+  if (!is.null(factor_cols)) {
+    for (col in factor_cols) {
+      df[[col]] <- as.factor(df[[col]])
+    }
+  }
+
+  if (!is.null(numeric_cols)) {
+    for (col in numeric_cols) {
+      # Bin numeric columns into quantile bins
+      binned <- cut(df[[col]], breaks = quantile(df[[col]], probs = seq(0, 1, length.out = bins + 1),
+                                                 na.rm = TRUE), include.lowest = TRUE, labels = FALSE)
+      df[[paste0(col, "_bin")]] <- as.factor(binned)
+    }
+  }
+
+  # Create stratification key by combining all columns
+  strat_cols <- c(factor_cols, paste0(numeric_cols, "_bin"))
+  df$strata <- apply(df[strat_cols], 1, paste, collapse = "_")
+
+  # Remove strata that are too small
+  stratum_counts <- table(df$strata)
+  valid_strata <- names(stratum_counts[stratum_counts >= min_stratum_size])
+  df <- df[df$strata %in% valid_strata, ]
+
+  # Stratified sampling
+  train_indices <- unlist(lapply(split(1:nrow(df), df$strata), function(idxs) {
+    n_train <- floor(length(idxs) * target_frac)
+    sample(idxs, n_train)
+  }))
+
+  train <- df[train_indices, !(names(df) %in% c("strata", paste0(numeric_cols, "_bin")))]
+  test  <- df[-train_indices, !(names(df) %in% c("strata", paste0(numeric_cols, "_bin")))]
+
+  list(train = train, test = test)
+}
+# Use the function
+#splits <- split_balanced(df_sample, factor_vars)
+#train_data <- splits$train
+#test_data <- splits$test
+splits_2 <- stratified_train_test_split(
+  data = df_sample,
+  target_frac = 0.8,
+  factor_cols = factor_vars,
+  numeric_cols = c("trip_duration", "trip_miles", "trip_hour"),
+  bins = 4, # number of bins for numeric columns
+  min_stratum_size = 5 # minimum samples in a stratum to be kept
+)
+
+train_data_2 <- splits_2$train
+test_data_2 <- splits_2$test
+
+nrow(df_sample)
+```
+```{r}
+# Sanity check for same levels in test-train split
+
+for (var in factor_vars) {
+  train_levels <- levels(train_data_2[[var]])
+  test_levels <- levels(test_data_2[[var]])
+
+  missing_in_train <- setdiff(levels(df_model[[var]]), train_levels)
+  missing_in_test <- setdiff(levels(df_model[[var]]), test_levels)
+
+  if (length(missing_in_train) > 0 || length(missing_in_test) > 0) {
+    cat(paste0("Missing levels for ", var, "\n"))
+    print(list(train_missing = missing_in_train, test_missing = missing_in_test))
+  }
+}
+```
+```{R eval=FALSE}
+#cl <- makeSlurmCluster(6)
+#registerDoParallel(cl)
+
+#library(doParallel)
+#registerDoParallel(cl)
+```
+```{r}
+predictors <- setdiff(names(train_data_2), "fare")
+form <- as.formula(paste("fare ~", paste(predictors, collapse = " + ")))
+
+lm <- lm(form, data = train_data_2)
+
+```
+
+```{r}
+# Predict on test data
+predictions <- predict(lm, newdata = test_data_2)
+
+# Evaluate performance
+actuals <- test_data_2$fare
+rmse <- sqrt(mean((predictions - actuals)^2))
+mae <- mean(abs(predictions - actuals))
+r2 <- 1 - sum((predictions - actuals)^2) / sum((actuals - mean(actuals))^2)
+
+cat("RMSE:", rmse, "\nMAE:", mae, "\nR-squared:", r2, "\n")
+```
+For sample size 0.005% of cleaned data, the following metrics are observed
+RMSE: 3.904028 
+MAE: 1.728776 
+R-squared: 0.9532892 
+
+For sample size 0.05% of cleaned data, the following metrics are observed
+RMSE: 4.16958 
+MAE: 1.834244 
+R-squared: 0.94698 
+For sample size 0.5% of cleaned data without replacement, the following metrics are observed
+RMSE: 3.580551 
+MAE: 1.409825 
+R-squared: 0.9655701
+```{r}
+df_plot <- data.frame(actual = actuals, predicted = predictions)
+
+# Plot actual vs. predicted
+ggplot(df_plot, aes(x = actual, y = predicted)) +
+  geom_point(color = "steelblue", alpha = 0.6) +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(title = "Actual vs. Predicted Fare",
+       x = "Actual Fare",
+       y = "Predicted Fare") +
+  theme_minimal()
+```
+```{r eval = FALSE}
+#stopCluster(cl)
+```
