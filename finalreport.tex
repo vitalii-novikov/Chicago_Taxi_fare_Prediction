@@ -1,0 +1,371 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\PassOptionsToPackage{dvipsnames,svgnames,x11names}{xcolor}
+%
+\documentclass[
+  letterpaper,
+  DIV=11,
+  numbers=noendperiod]{scrartcl}
+
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else  
+    % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+% Make \paragraph and \subparagraph free-standing
+\makeatletter
+\ifx\paragraph\undefined\else
+  \let\oldparagraph\paragraph
+  \renewcommand{\paragraph}{
+    \@ifstar
+      \xxxParagraphStar
+      \xxxParagraphNoStar
+  }
+  \newcommand{\xxxParagraphStar}[1]{\oldparagraph*{#1}\mbox{}}
+  \newcommand{\xxxParagraphNoStar}[1]{\oldparagraph{#1}\mbox{}}
+\fi
+\ifx\subparagraph\undefined\else
+  \let\oldsubparagraph\subparagraph
+  \renewcommand{\subparagraph}{
+    \@ifstar
+      \xxxSubParagraphStar
+      \xxxSubParagraphNoStar
+  }
+  \newcommand{\xxxSubParagraphStar}[1]{\oldsubparagraph*{#1}\mbox{}}
+  \newcommand{\xxxSubParagraphNoStar}[1]{\oldsubparagraph{#1}\mbox{}}
+\fi
+\makeatother
+
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+
+\KOMAoption{captions}{tableheading}
+\makeatletter
+\@ifpackageloaded{caption}{}{\usepackage{caption}}
+\AtBeginDocument{%
+\ifdefined\contentsname
+  \renewcommand*\contentsname{Table of contents}
+\else
+  \newcommand\contentsname{Table of contents}
+\fi
+\ifdefined\listfigurename
+  \renewcommand*\listfigurename{List of Figures}
+\else
+  \newcommand\listfigurename{List of Figures}
+\fi
+\ifdefined\listtablename
+  \renewcommand*\listtablename{List of Tables}
+\else
+  \newcommand\listtablename{List of Tables}
+\fi
+\ifdefined\figurename
+  \renewcommand*\figurename{Figure}
+\else
+  \newcommand\figurename{Figure}
+\fi
+\ifdefined\tablename
+  \renewcommand*\tablename{Table}
+\else
+  \newcommand\tablename{Table}
+\fi
+}
+\@ifpackageloaded{float}{}{\usepackage{float}}
+\floatstyle{ruled}
+\@ifundefined{c@chapter}{\newfloat{codelisting}{h}{lop}}{\newfloat{codelisting}{h}{lop}[chapter]}
+\floatname{codelisting}{Listing}
+\newcommand*\listoflistings{\listof{codelisting}{List of Listings}}
+\makeatother
+\makeatletter
+\makeatother
+\makeatletter
+\@ifpackageloaded{caption}{}{\usepackage{caption}}
+\@ifpackageloaded{subcaption}{}{\usepackage{subcaption}}
+\makeatother
+
+\usepackage{bookmark}
+
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same} % disable monospaced font for URLs
+\hypersetup{
+  pdftitle={Final Report},
+  pdfauthor={Novikov Vitalii, Pozdena Nicolas, Prinz Paul, Shapovalov Anton, Wadhwani Amar},
+  colorlinks=true,
+  linkcolor={blue},
+  filecolor={Maroon},
+  citecolor={Blue},
+  urlcolor={Blue},
+  pdfcreator={LaTeX via pandoc}}
+
+
+\title{Final Report}
+\author{Novikov Vitalii, Pozdena Nicolas, Prinz Paul, Shapovalov Anton,
+Wadhwani Amar}
+\date{}
+
+\begin{document}
+\maketitle
+
+
+\newpage
+
+\subsection{Preface}\label{preface}
+
+This report was created as part of the Masters study program Data
+Science of the University of Applied Sciences Vienna. All authors
+contributed equally on this project and have been part from the
+beginning and were part of all decision made.
+
+All of the used data is openly accessible and the sources are referenced
+in the chapters below.
+
+We would like to thank Dr.~Andreas Reschreiter for his advisory role on
+the report.
+
+\newpage
+
+\subsection{Introduction}\label{introduction}
+
+The aim of this report was to describe and document the process of
+building a fare prediction model for chicago taxi fares, based on the
+openly available data from the city of chicago
+(\href{https://data.cityofchicago.org/Transportation/Taxi-Trips-2013-2023-/wrvz-psew/about_data}{dataset}).
+The reason for this project was to train and gain experience on machine
+learning model, handling large datasets, and planning and finishing a
+datadriven project from the first idea to the deployed prototype.
+
+\subsubsection{Goals}\label{goals}
+
+To measure the success of this project certain goals and requirements
+were imposed on the project team. Some of these goals and requirements
+were set by Dr.~Anderas Reschreiter as part of the assignment other
+goals, the project team set for them self.
+
+The requirements for the assignment were to develop a model that can
+predict a taxi fare based on the input of two addresses (pickup and drop
+off) as well as a time when the taxi should pick up a potential
+customer. Therefor a shiny app should be developed that allows a user to
+input these information quickly.
+
+The goals the team set for them self are described below.
+
+\paragraph{Qualitative Objectives}\label{qualitative-objectives}
+
+\begin{itemize}
+\item
+  Develop a predictive model to estimate the fare amount for taxi trips
+  in Chicago
+\item
+  Evaluate various modeling approaches and deploy the best solution
+\end{itemize}
+
+\paragraph{Quantitative Objectives}\label{quantitative-objectives}
+
+\begin{itemize}
+\item
+  Achieve \textbf{RM (SE per 10 minutes) \textless{} \$2} on the
+  validation set
+\item
+  Achieve \textbf{mean AE/fare \textless{} 5\%} for on the validation
+  set
+\item
+  Compare performance across 5 different model types
+\end{itemize}
+
+\subsubsection{Models}\label{models}
+
+The models that were considered and analysed in this report were chosen
+for their effectiveness with large datasets. All models were tested and
+compared with the same quantitative objectives.
+
+\begin{itemize}
+\item
+  Neural network
+\item
+  XGBoost
+\item
+  Random Forest
+\item
+  Linear Model
+\item
+  GLM
+\end{itemize}
+
+\newpage
+
+\subsection{Planned Process}\label{planned-process}
+
+The process of this project and report can be separated in 7 steps.
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item
+  data aquisition
+\item
+  exploratory data analysis
+\item
+  data cleaning
+\item
+  dataset preparation
+\item
+  model training and evaluation
+\item
+  ui development
+\item
+  combining the final works
+\end{enumerate}
+
+Each of these steps is discussed in a separate chapter. During the
+development and project phase multiple of those steps were done
+simultaneously to enable a swift and fast process progression.
+
+And estimated project timeline can be seen below
+
+{[} insert timeline {]}
+
+\newpage
+
+\subsection{Data acquisition}\label{data-acquisition}
+
+As mentioned in the introduction the data for this project was made
+available by the city of chicago via their online data platform
+\url{https://data.cityofchicago.org/}. The dataset provides information
+on taxi fares from the year 2013 until the year 2023. In these ten years
+212 million trips were recorded amounting to approximately nine GB of
+data. The data was made available via a direct data download or an
+exposed API-Endpoint.
+
+\subsubsection{challenges}\label{challenges}
+
+The first challenge faced in this project was the data acquisition,
+although the data is openly available the downloading process showed to
+be very difficult. The direct data download only allowed for all rows to
+be downloaded in one file and due to the limited downloading bandwidth
+from the data servers the download was not able to be completed. The API
+Endpoint uses the Socrata Framework, allowing for easy querying of the
+data. However the API also had an imposed limit for their bandwitdh
+resulting in a slow month-wise download in 50.000 row steps.
+
+{[}insert downloading code{]}
+
+\subsubsection{raw data}\label{raw-data}
+
+the data included these 23 columns.
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Column Name & Description & API Field Name & Data Type \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+& & & \\
+\end{longtable}
+
+\newpage
+
+\newpage
+
+\subsection{Data cleaning}\label{data-cleaning}
+
+\subsubsection{data completeness}\label{data-completeness}
+
+\subsubsection{error and impossible
+measurements}\label{error-and-impossible-measurements}
+
+\newpage
+
+\subsection{Dataset preparation}\label{dataset-preparation}
+
+\subsubsection{column selection}\label{column-selection}
+
+\subsubsection{stratifying process}\label{stratifying-process}
+
+\subsubsection{dataset sizes}\label{dataset-sizes}
+
+\newpage
+
+\subsection{Model training and
+evaluation}\label{model-training-and-evaluation}
+
+
+
+
+\end{document}

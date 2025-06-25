@@ -9,7 +9,7 @@ editor: visual
 
 ## Preface
 
-This report was created as part of the Maters study program Data Science of the University of Applied Sciences Vienna. All authors contributed equally on this project and have been part from the beginning and were part of all decision made.
+This report was created as part of the Masters study program Data Science of the University of Applied Sciences Vienna. All authors contributed equally on this project and have been part from the beginning and were part of all decision made.
 
 All of the used data is openly accessible and the sources are referenced in the chapters below.
 
@@ -19,11 +19,11 @@ We would like to thank Dr. Andreas Reschreiter for his advisory role on the repo
 
 ## Introduction
 
-The aim of this report was to describe and document the process of building a fare prediction model for chicago taxi fares, based on the openly available data from the city of chicago ([dataset](https://data.cityofchicago.org/Transportation/Taxi-Trips-2013-2023-/wrvz-psew/about_data "click to open the dataset")). The reason for this project was to train and gain experience on machine learning model, handling large datasets, and planning and finishing a datadriven project from first the first idea to the deployed prototype.
+The aim of this report was to describe and document the process of building a fare prediction model for chicago taxi fares, based on the openly available data from the city of chicago ([dataset](https://data.cityofchicago.org/Transportation/Taxi-Trips-2013-2023-/wrvz-psew/about_data "click to open the dataset")). The reason for this project was to train and gain experience on machine learning model, handling large datasets, and planning and finishing a datadriven project from the first idea to the deployed prototype.
 
 ### Goals
 
-Two measure the success of this project certain goals and requirements were imposed on the projectteam. Some of these goals and requirements were set by Dr. Anderas Reschreiter as part of the assignment other goals the project team set for them self.
+To measure the success of this project certain goals and requirements were imposed on the project team. Some of these goals and requirements were set by Dr. Anderas Reschreiter as part of the assignment other goals, the project team set for them self.
 
 The requirements for the assignment were to develop a model that can predict a taxi fare based on the input of two addresses (pickup and drop off) as well as a time when the taxi should pick up a potential customer. Therefor a shiny app should be developed that allows a user to input these information quickly.
 
@@ -99,32 +99,33 @@ The first challenge faced in this project was the data acquisition, although the
 
 the data included these 23 columns.
 
-| Column Name | Description | API Field Name | Data Type |
-|-------------|-------------|----------------|-----------|
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
-|             |             |                |           |
+| Column Name                | Description | API Field Name | Data Type          |
+|----------------------------|-------------|----------------|--------------------|
+| Trip ID                    |             |                | Text               |
+| Taxi ID                    |             |                | Text               |
+| Trip Start Timestamp       |             |                | Floating Timestamp |
+| Trip End Timestamp         |             |                | Floating Timestamp |
+| Trip Seconds               |             |                | Number             |
+| Trip Miles                 |             |                | Number             |
+| Pickup Census Tract        |             |                | Text               |
+| Dropoff Census Tract       |             |                | Text               |
+| Pickup Community Area      |             |                | Number             |
+| Dropoff Community Area     |             |                | Number             |
+| Fare                       |             |                | Number             |
+| Tips                       |             |                | Number             |
+| Tolls                      |             |                | Number             |
+| Extras                     |             |                | Number             |
+| Trip Total                 |             |                | Number             |
+| Payment Type               |             |                | Text               |
+| Company                    |             |                | Text               |
+| Pickup Centroid Latitude   |             |                | Number             |
+| Pickup Centroid Longitude  |             |                | Number             |
+| Pickup Centroid Location   |             |                | Point              |
+| Dropoff Centroid Latitude  |             |                | Number             |
+| Dropoff Centroid Longitude |             |                | Number             |
+| Dropoff Centroid Location  |             |                | Point              |
+|                            |             |                |                    |
+|                            |             |                |                    |
 
 \newpage
 
@@ -132,19 +133,73 @@ the data included these 23 columns.
 
 ## Data cleaning
 
-### data completeness
+The API allowed for a first step of data cleaning while downloading. Through a filter only rows that contained information in all columns where downloaded. Due to the large amount of available data missing or possible incorrect data was dropped.
 
-### error and impossible measurements
+To further ensure the correctness of the data a few filters were applied to check for realistic measurements.
+
+-   The average speed calculated from the *Trip Seconds* and *Trip Miles* should lie between 10 and 70 mph.
+
+-   The *Fare*, *Tolls*, *Extras* and *Tips* must add up to the *Trip Total*.
+
+-   The *Pickup Centroid Location* and *Dropoff Centroid Location* must lie within the Area of Chicago.
 
 \newpage
 
 ## Dataset preparation
 
+Two allow for a fair comparison between the selected models for this project, multiple datasets with different sizes were prepared to be used as training and test data.
+
 ### column selection
+
+The first step in the dataset selection was the selection of features. The final prototype should allow users to select a pickup address and a dropoff address. The app should then retrieve information like the current date and time as well as information on the most likely route the taxi is going to take. Based on that the distance and also the time for the ride can be estimated.
+
+As the model will only receive that information the following columns were selected from the dataset.
+
+-   Trip Start Timestamp
+
+-   Trip Seconds
+
+-   Trip Miles
+
+-   Pickup Centroid Latitude
+
+-   Pickup Centroid Longitude
+
+-   Dropoff Centroid Latitude
+
+-   Dropoff Centroid Longitude
+
+-   Fare
+
+### feature engineering
+
+Before using these columns for the training of model the *Trip Start Timestamp* was converted into *year*, *month*, *day* (1-31), *weekday* (Monday - Sunday) and *time decimal* (time of the day converted into a decimal number).
+
+Therefore creating a dataset with 11 features and one target variable (*Fare*).
+
+The next step was the removal of outliers. As the coordinates have been already filtered in the previous steps. The outliers were selected based on the following features as well as the following feature combinations.
+
+-   *Trip Seconds*
+
+-   *Trip Miles*
+
+-   *Fare*
+
+-   *Fare*/\*Trip Seconds\*
+
+-   Fare/\*Trip Miles\*
+
+-   *Trip Miles*/\*Trip Seconds\*
+
+The Interquartile Range was used as the outlier detection method.
 
 ### stratifying process
 
+To ensure a model with no blindspots, the datasets were stratifyed based on their features to ensure each dataset would have a balanced set of featurevalues. An example for this stratifying can be seen with the *time_decimal* column. In the original data there is a lack of data for the time around 5 a.m. after the stratifying process the lack is still visible but was reduced significantly.
+
 ### dataset sizes
+
+There were different sizes of datasets created to allow for quicker training of the model and extensive testing. In total four datasets were created with 10.000, 50.000, 100.000 and 500.000 rows.
 
 \newpage
 
