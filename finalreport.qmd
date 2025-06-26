@@ -1,7 +1,7 @@
 ---
 title: "Final Report"
 author: "Novikov Vitalii, Pozdena Nicolas, Prinz Paul, Shapovalov Anton, Wadhwani Amar"
-format: pdf
+format: html
 editor: visual
 ---
 
@@ -79,10 +79,6 @@ The process of this project and report can be separated in 7 steps.
 
 Each of these steps is discussed in a separate chapter. During the development and project phase multiple of those steps were done simultaneously to enable a swift and fast process progression.
 
-And estimated project timeline can be seen below
-
-\[ insert timeline \]
-
 \newpage
 
 ## Data acquisition
@@ -99,35 +95,31 @@ The first challenge faced in this project was the data acquisition, although the
 
 the data included these 23 columns.
 
-| Column Name                | Description | API Field Name | Data Type          |
-|----------------------------|-------------|----------------|--------------------|
-| Trip ID                    |             |                | Text               |
-| Taxi ID                    |             |                | Text               |
-| Trip Start Timestamp       |             |                | Floating Timestamp |
-| Trip End Timestamp         |             |                | Floating Timestamp |
-| Trip Seconds               |             |                | Number             |
-| Trip Miles                 |             |                | Number             |
-| Pickup Census Tract        |             |                | Text               |
-| Dropoff Census Tract       |             |                | Text               |
-| Pickup Community Area      |             |                | Number             |
-| Dropoff Community Area     |             |                | Number             |
-| Fare                       |             |                | Number             |
-| Tips                       |             |                | Number             |
-| Tolls                      |             |                | Number             |
-| Extras                     |             |                | Number             |
-| Trip Total                 |             |                | Number             |
-| Payment Type               |             |                | Text               |
-| Company                    |             |                | Text               |
-| Pickup Centroid Latitude   |             |                | Number             |
-| Pickup Centroid Longitude  |             |                | Number             |
-| Pickup Centroid Location   |             |                | Point              |
-| Dropoff Centroid Latitude  |             |                | Number             |
-| Dropoff Centroid Longitude |             |                | Number             |
-| Dropoff Centroid Location  |             |                | Point              |
-|                            |             |                |                    |
-|                            |             |                |                    |
-
-\newpage
+| Column Name | Description | Data Type |
+|------------------------|------------------------|------------------------|
+| Trip ID | identifies the trip | Text |
+| Taxi ID | identifies the taxi | Text |
+| Trip Start Timestamp | when did the trip start | Floating Timestamp |
+| Trip End Timestamp | when did the trip end | Floating Timestamp |
+| Trip Seconds | how long was the trip in seconds | Number |
+| Trip Miles | how far was the trip in miles | Number |
+| Pickup Census Tract | in which census tract was the passenger picked up | Text |
+| Dropoff Census Tract | in which census tract was the passenger dropped off | Text |
+| Pickup Community Area | in which community area was the passenger picked up | Number |
+| Dropoff Community Area | in which community area was the passenger dropped of | Number |
+| Fare | how much was the fare | Number |
+| Tips | how much tip was given | Number |
+| Tolls | how many tolls were payed | Number |
+| Extras | how many extra payments were made | Number |
+| Trip Total | how much was the trip in total | Number |
+| Payment Type | what kind of payment was used | Text |
+| Company | which taxi company was used | Text |
+| Pickup Centroid Latitude | the centroid latitude of the pickup census tract | Number |
+| Pickup Centroid Longitude | the centroid longitude of the pickup census tract | Number |
+| Pickup Centroid Location | combined longitude and latitude of the centroid of the pickup census tract | Point |
+| Dropoff Centroid Latitude | the centroid latitude of the dropoff census tract | Number |
+| Dropoff Centroid Longitude | the centroid longitude of the dropoff census tract | Number |
+| Dropoff Centroid Location | combined longitude and latitude of the centroid of the dropoff census tract | Point |
 
 \newpage
 
@@ -185,17 +177,19 @@ The next step was the removal of outliers. As the coordinates have been already 
 
 -   *Fare*
 
--   *Fare*/\*Trip Seconds\*
+-   *Fare*/*Trip Seconds*
 
--   Fare/\*Trip Miles\*
+-   Fare/*Trip Miles*
 
--   *Trip Miles*/\*Trip Seconds\*
+-   *Trip Miles*/*Trip Seconds*
 
 The Interquartile Range was used as the outlier detection method.
 
 ### stratifying process
 
 To ensure a model with no blindspots, the datasets were stratifyed based on their features to ensure each dataset would have a balanced set of featurevalues. An example for this stratifying can be seen with the *time_decimal* column. In the original data there is a lack of data for the time around 5 a.m. after the stratifying process the lack is still visible but was reduced significantly.
+
+![](finalreport_files/stratified.png)
 
 ### dataset sizes
 
@@ -204,3 +198,55 @@ There were different sizes of datasets created to allow for quicker training of 
 \newpage
 
 ## Model training and evaluation
+
+With the stratified datasets in place the model training was able to commence.
+
+All models were trained and tested on the same datasets with the same train/test splits to ensure a fair comparison.
+
+The model were evaluated based on common metrics for regression models such as root mean squared error, R² and the mean absolute error, as well as the metrics root mean square error per 10 minutes and mean absolute error in percent which the team has set as their own goals.
+
+In the following table the results of the training, testing and validating can be found for the best result for each model.
+
+| Model   | RMSE | MAE  | R²   | RMSE per 10 minutes | MAE in % |
+|---------|------|------|------|---------------------|----------|
+| LM      | 1.43 | 0.63 | 0.81 | 0.71                | 5.83     |
+| GLM     | 1.43 | 0.63 | 0.81 | 0.71                | 5.83     |
+| XGBOOST | 0.82 | 0.35 | 0.94 | 0.41                | 3.03     |
+| RF      | 0.8  | 0.42 | 0.93 | 0.8                 | 4.04     |
+| NN      | 1.27 | 0.64 | 0.83 | 1.27                | 6.63     |
+
+Plotting the results of one of the models reveals higher error margin with shorter trips. As well as less accurate model predictions with larger datasets.
+
+![](finalreport_files/xgboost_L.png)
+
+In this case the XGBOOST over prices the fares for smaller amounts and under prices the fares for higher amounts. Therefore going for an average between the two extremes. It still achieves the set goal for the RMSE scaled to 10 minutes but fails to achieve and MAE in % below 5 Percent.
+
+Scaling the test and train data revealed no better metrics. The RMSE (10 min) as well as the Mean AE % increased slightly.
+
+![](finalreport_files/xgboost_L_Scaled.png)
+
+## Model selection
+
+Although none of the model have reached the expected goals consistantly over all dataset sizes, XGBoost has come closest. In the smallest datasets it has reached both goals of an RMSE per 10 minutes smaller than 2 and the MAE in % smaller than 5. Therefor XGBoost was choosen as the model to be used in the prototype.
+
+## Shiny App
+
+To create a prototype for users to select pickup and dropoff positions, the shiny framework was used. A user has the possibility to add coordinates and calculate their fare. The prototype also visualizes the path which was calculated using open street maps.
+
+### The shiny app when opened
+
+![]()
+
+![](finalreport_files/emptyShiny.png)
+
+\newpage
+
+### The shiny app when a path is calculated
+
+![](finalreport_files/path.png)
+
+\newpage
+
+## Conclusion
+
+This project has shown that multiple different model can be used for the task of fare prediction. XGBoost has been shown to be the most accurate on this particular dataset however the other models such as Random Forrest or Neural networks could be fine tuned to achieve the same metrics. However the training for those two models takes significantly longer than for XGBoost.

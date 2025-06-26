@@ -88,7 +88,7 @@ evaluate_and_plot_full_model <- function(y, duration_seconds, prediction, model 
     )^2 , na.rm = TRUE)),2)
   
 
-  ae_percent <- (abs(y_valid - prediction_valid) / y_valid) * 100
+  ae_percent <- (abs(y_valid - prediction_valid) / y_valid) * 100 - 1
   mean_ae_percent <- round(mean(ae_percent, na.rm = TRUE),2)
   
   
@@ -612,14 +612,30 @@ models <- list(
   "GLM" = glm,
   "LM" = lm
 )
+counter = 0
 
 for (ds in rev(names(df))) {
     dataSet <- df[[ds]] %>% filter(trip_seconds > 60)
     dataSet$weekday <- as.numeric(factor(dataSet$weekday))
-    dataSet <- remove_outliers_z(dataSet, "fare", "trip_seconds", 1.5)
+    dataSet$fareSeconds <- dataSet$fare/dataSet$trip_seconds
+    dataSet <- remove_outliers_z(dataSet, "fare", "fareSeconds", 1.5)
+    dataSet <- remove_outliers_z(dataSet, "trip_miles", "trip_seconds", 1.5)
+    dataSet <- dataSet %>% select(-fareSeconds)
     train_index <- sample(1:nrow(dataSet), percentage * nrow(dataSet))
-    train <- dataSet[train_index, ]
-    test <- dataSet[-train_index, ]
+    train <- dataSet[train_index, ] %>% drop_na()
+    test <- dataSet[-train_index, ] %>% drop_na()
+    
+    test_durations <- test$trip_seconds
+    
+    
+    scale_params <- preProcess(train[, -which(names(train) == "fare")], method = c("center", "scale"))
+    train_scaled <- predict(scale_params, train)
+    test_scaled <- predict(scale_params, test)
+    
+    train_scaled$fare <- train$fare
+    test_scaled$fare <- test$fare
+    train <- train_scaled
+    test <- test_scaled
     
      # Extract target and clean test set
     y <- test$fare
@@ -632,8 +648,8 @@ for (ds in rev(names(df))) {
     
      tryCatch({
       if (m == "XGBOOST") {
-          train_clean <- train %>% drop_na()
-          test_clean <- test %>% drop_na()
+          train_clean <- train 
+          test_clean <- test
         
           xform <- fare ~ . - 1  # consistent formula without intercept
 
@@ -643,7 +659,7 @@ for (ds in rev(names(df))) {
           # Prepare labels and durations
           train_labels <- train_clean$fare
           test_labels <- test_clean$fare
-          test_durations <- test_clean$trip_seconds
+          
         
           # DMatrix conversion
           dtrain <- xgb.DMatrix(data = train_matrix, label = train_labels)
@@ -664,6 +680,10 @@ for (ds in rev(names(df))) {
             model = m,
             dataset = ds
           ))
+          
+          save_path <- paste0("fare_xgb_",counter,".model")
+          xgb.save(model_obj, save_path)
+          counter <- counter +1
       } else {
         model_func <- models[[m]]
         model_obj <- model_func(form, data = train, na.action = na.omit)
@@ -680,5 +700,77 @@ for (ds in rev(names(df))) {
   }
 
 }
+```
+
+```{r}
+models <- list(             # handled in its own block      # random-forest
+  "RF" = NULL        # feed-forward neural net
+)
+
+# ----------------------------------------------------------------------------- 
+
+  
+
+    dataSet <- df[["../all_data/datasets/dsSmall.csv"]] %>% filter(trip_seconds > 60)
+    dataSet <- na.omit(dataSet)
+    dataSet$weekday <- as.numeric(factor(dataSet$weekday))
+    dataSet$fareSeconds <- dataSet$fare/dataSet$trip_seconds
+    dataSet <- remove_outliers_z(dataSet, "fare", "fareSeconds", 1.5)
+    dataSet <- remove_outliers_z(dataSet, "trip_miles", "trip_seconds", 1.5)
+    dataSet <- dataSet %>% select(-fareSeconds)
+    train_index <- sample(1:nrow(dataSet), 0.3 * nrow(dataSet))
+    train <- dataSet[train_index, ]
+    test <- dataSet[-train_index, ]
+    
+    scale_params <- preProcess(train[, -which(names(train) == "fare")], method = c("center", "scale"))
+    train <- predict(scale_params, train)
+    test <- predict(scale_params, test)
+    
+     # Extract target and clean test set
+    y <- test$fare
+  
+  for (m in names(models)) {
+    print(sprintf("▶️  Working on %s with  …", m ))
+    
+    tryCatch({
+      if (m == "RF") {
+        # ----- Random-Forest --------------------------------------------------
+        model_obj <- randomForest(as.formula("fare ~ ."), data = train, na.action = na.omit)
+        pred <- predict(model_obj, newdata = test, type = "response")
+        
+      } else if (m == "NEURALNET") {
+        # ----- Neural-net -----------------------------------------------------
+        # neuralnet needs purely numeric matrix input
+        nn_train <- model.matrix(form, data = train)[, -1]  # drop intercept
+        nn_test  <- model.matrix(form, data = test)[, -1]
+        
+        nn_df <- cbind(fare = train$fare, as.data.frame(nn_train))
+        nn_formula <- as.formula(paste("fare ~", 
+                                       paste(colnames(nn_train), collapse = " + ")))
+        
+        model_obj <- neuralnet("fare ~ .", data = nn_df, hidden = c(2),
+                               linear.output = TRUE, stepmax = 1e6)
+        pred_raw <- compute(model_obj, nn_test)$net.result
+        pred <- as.numeric(pred_raw)
+        
+      } else {
+        
+      }
+      
+      # ----- common evaluation ----------------------------------------------
+      print(evaluate_and_plot_full_model(
+        y               = y,
+        duration_seconds = test$trip_seconds,
+        prediction      = pred,
+        model           = m,
+        dataset         = "../all_data/datasets/dsSmall.csv"
+      ))
+      
+    }, error = function(e) {
+      message(sprintf("❌ Error with model %s on dataset: %s", m, e$message))
+    })
+  }
+
+
 ```
 

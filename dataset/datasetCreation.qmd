@@ -290,3 +290,38 @@ withCoords <- withCoords %>% filter(!is.na(dropoff_centroid_latitude) | is.na(!p
 write.csv(withCoords, "../all_data/datasets/dsLarge.csv")
 
 ```
+
+
+```{r}
+newDataset <- read.csv("../all_data/datasets/dsLarge.csv")
+
+oldDataset <- read.csv("../all_data/chicago_taxi_2015_02.csv")
+
+
+```
+
+```{r}
+library(ggplot2)
+library(gridExtra)  # for side-by-side plots
+
+# Plot for newDataset
+p1 <- ggplot(newDataset, aes(x = time_decimal)) +
+  geom_histogram(fill = "#1f77b4", color = "white", bins = 30) +
+  labs(title = "stratified dataset", x = "Time", y = NULL) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Plot for oldDataset
+p2 <- ggplot(oldDataset, aes(x = time_decimal)) +
+  geom_histogram(fill = "#ff7f0e", color = "white", bins = 30) +
+  labs(title = "raw data", x = "Time", y = NULL) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Combine plots
+grid.arrange(p2, p1 , ncol = 2, top = "Distribution of Time before and after stratifying")
+```

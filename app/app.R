@@ -1,6 +1,7 @@
 source(file.path("./functions/install_and_load.R")) # ensure /app is you wd
 # Install and load required packages
 install_and_load(c(
+  "tidyverse",
   "shiny", 
   "leaflet", 
   "sf", 

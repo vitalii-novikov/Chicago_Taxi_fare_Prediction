@@ -7,7 +7,9 @@ server <- function(input, output, session) {
     end_point_sf = NULL, 
     path_data = NULL, 
     map_view_set = FALSE,
-    path_length_val = NULL # NEW: To store path length as a numeric value in km
+    path_length_val = NULL, 
+    trip_duration_sec = NULL,
+    predicted_fare = NULL
   )
   
   output$map <- leaflet::renderLeaflet({
@@ -54,9 +56,25 @@ server <- function(input, output, session) {
   # --- NEW: Render function for path length display ---
   output$path_length_display <- renderText({
     if (!is.null(rv$path_length_val)) {
-      paste(rv$path_length_val, "km")
+      paste(rv$path_length_val, "mi")
     } else {
       "N/A" # Or "Path not calculated" or similar
+    }
+  })
+  
+  output$trip_duration_display <- renderText({
+    if (!is.null(rv$trip_duration_sec)) {
+      paste(rv$trip_duration_sec, "s")
+    } else {
+      "N/A" # Or "Path not calculated" or similar
+    }
+  })
+  
+  output$predicted_fare_display <- renderText({
+    if (TRUE) {
+      paste0("$", sprintf("%.2f", 12))
+    } else {
+      "N/A"
     }
   })
   # --- END NEW ---
@@ -284,7 +302,10 @@ server <- function(input, output, session) {
       if (inherits(paths_output, "sf") && nrow(paths_output) > 0) {
         current_path_geom <- sf::st_geometry(paths_output[1, ]); if (!is.null(current_path_geom) && !sf::st_is_empty(current_path_geom)) {
           rv$path_data <- current_path_geom; path_length_m <- sf::st_length(rv$path_data)
-          path_length_km_value <- units::set_units(path_length_m, "km"); rv$path_length_val <- round(units::drop_units(path_length_km_value), 2) # STORE LENGTH
+          path_length_mi_value <- units::set_units(path_length_m, "mi")
+          rv$path_length_val <- round(units::drop_units(path_length_mi_value), 2)
+          average_speed_mph <- 35
+          rv$trip_duration_sec <- round((rv$path_length_val / average_speed_mph) * 3600)
           leaflet::leafletProxy("map") %>% leaflet::addPolylines(data = rv$path_data, color = "blue", weight = 5, opacity = 0.8, layerId = "calculated_path", label = paste("Shortest Path:", rv$path_length_val, "km")) %>%
             leaflet::fitBounds(lng1 = sf::st_bbox(rv$path_data)[1], lat1 = sf::st_bbox(rv$path_data)[2], lng2 = sf::st_bbox(rv$path_data)[3], lat2 = sf::st_bbox(rv$path_data)[4])
           removeNotification(id_notify); showNotification(paste("Shortest path found:", rv$path_length_val, "km"), type = "message", duration = 8); path_found_and_processed <- TRUE
@@ -298,7 +319,11 @@ server <- function(input, output, session) {
             combined_geom <- sf::st_combine(path_edges$geometry); current_path_geom <- sf::st_sfc(combined_geom, crs = sf::st_crs(street_network_obj)) 
             if (!sf::st_is_empty(current_path_geom)) {
               rv$path_data <- current_path_geom; path_length_m <- sum(sf::st_length(path_edges)) 
-              path_length_km_value <- units::set_units(path_length_m, "km"); rv$path_length_val <- round(units::drop_units(path_length_km_value), 2) # STORE LENGTH
+              path_length_mi_value  <- units::set_units(path_length_m, "mi")
+              rv$path_length_val    <- round(units::drop_units(path_length_mi_value), 2)
+              
+              average_speed_mph     <- 35
+              rv$trip_duration_sec  <- round((rv$path_length_val / average_speed_mph) * 3600) # STORE LENGTH
               leaflet::leafletProxy("map") %>% leaflet::addPolylines(data = rv$path_data, color = "purple", weight = 5, opacity = 0.8, layerId = "calculated_path", label = paste("Shortest Path:", rv$path_length_val, "km")) %>%
                 leaflet::fitBounds(lng1 = sf::st_bbox(rv$path_data)[1], lat1 = sf::st_bbox(rv$path_data)[2], lng2 = sf::st_bbox(rv$path_data)[3], lat2 = sf::st_bbox(rv$path_data)[4])
               removeNotification(id_recon); removeNotification(id_notify); showNotification(paste("Shortest path found:", rv$path_length_val, "km"), type = "message", duration = 8); path_found_and_processed <- TRUE
@@ -318,4 +343,25 @@ server <- function(input, output, session) {
     })
     print("--- Path Calculation Attempt Finished (CAR Streets Only) ---") 
   })
+  
+  
+  get_datetime_features <- function(time_stamp = Sys.time()) {
+    lt <- as.POSIXlt(time_stamp)
+    
+    year   <- lt$year + 1900
+    month  <- lt$mon  + 1
+    day    <- lt$mday
+    
+    weekday <- (lt$wday %% 7)
+    
+    time_decimal <- lt$hour + lt$min / 60 + lt$sec / 3600
+    
+    list(
+      year          = year,
+      month         = month,
+      day           = day,
+      weekday       = weekday,
+      time_decimal  = time_decimal
+    )
+  }
 }

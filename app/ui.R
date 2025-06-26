@@ -17,8 +17,7 @@ ui <- fluidPage(
       }
     "))
   ),
-  
-  
+
   
   
   
@@ -28,6 +27,9 @@ ui <- fluidPage(
     
     sidebarPanel(
       width = 4,
+      strong("Predicted Fare:"),
+      verbatimTextOutput("predicted_fare_display"),
+      hr(),
       h4("Enter Coordinates"),
       numericInput("start_lon_input", "Start Longitude:", value = -87.6234, step = 0.0001),
       numericInput("start_lat_input", "Start Latitude:", value = 41.8827, step = 0.0001),
@@ -43,7 +45,10 @@ ui <- fluidPage(
       # --- ADD THE NEW OUTPUT ELEMENT HERE ---
       hr(), # Optional separator
       strong("Shortest Path Length:"),
-      verbatimTextOutput("path_length_display")
+      verbatimTextOutput("path_length_display"),
+      
+      strong("Estimated Duration (seconds):"),  # NEW LINE
+      verbatimTextOutput("trip_duration_display"), # NEW OUTPUT
       # --- END OF NEW OUTPUT ELEMENT ---
     ),
     
