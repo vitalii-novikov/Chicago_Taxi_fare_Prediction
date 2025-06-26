@@ -71,8 +71,8 @@ server <- function(input, output, session) {
   })
   
   output$predicted_fare_display <- renderText({
-    if (TRUE) {
-      paste0("$", sprintf("%.2f", 12))
+    if (!is.null(rv$predicted_fare) && !is.na(rv$predicted_fare)) {
+      sprintf("$ %.2f", rv$predicted_fare)
     } else {
       "N/A"
     }
@@ -306,6 +306,7 @@ server <- function(input, output, session) {
           rv$path_length_val <- round(units::drop_units(path_length_mi_value), 2)
           average_speed_mph <- 35
           rv$trip_duration_sec <- round((rv$path_length_val / average_speed_mph) * 3600)
+          load_and_predict_fare()
           leaflet::leafletProxy("map") %>% leaflet::addPolylines(data = rv$path_data, color = "blue", weight = 5, opacity = 0.8, layerId = "calculated_path", label = paste("Shortest Path:", rv$path_length_val, "km")) %>%
             leaflet::fitBounds(lng1 = sf::st_bbox(rv$path_data)[1], lat1 = sf::st_bbox(rv$path_data)[2], lng2 = sf::st_bbox(rv$path_data)[3], lat2 = sf::st_bbox(rv$path_data)[4])
           removeNotification(id_notify); showNotification(paste("Shortest path found:", rv$path_length_val, "km"), type = "message", duration = 8); path_found_and_processed <- TRUE
@@ -324,6 +325,7 @@ server <- function(input, output, session) {
               
               average_speed_mph     <- 35
               rv$trip_duration_sec  <- round((rv$path_length_val / average_speed_mph) * 3600) # STORE LENGTH
+              load_and_predict_fare()
               leaflet::leafletProxy("map") %>% leaflet::addPolylines(data = rv$path_data, color = "purple", weight = 5, opacity = 0.8, layerId = "calculated_path", label = paste("Shortest Path:", rv$path_length_val, "km")) %>%
                 leaflet::fitBounds(lng1 = sf::st_bbox(rv$path_data)[1], lat1 = sf::st_bbox(rv$path_data)[2], lng2 = sf::st_bbox(rv$path_data)[3], lat2 = sf::st_bbox(rv$path_data)[4])
               removeNotification(id_recon); removeNotification(id_notify); showNotification(paste("Shortest path found:", rv$path_length_val, "km"), type = "message", duration = 8); path_found_and_processed <- TRUE
@@ -344,15 +346,14 @@ server <- function(input, output, session) {
     print("--- Path Calculation Attempt Finished (CAR Streets Only) ---") 
   })
   
-  
   get_datetime_features <- function(time_stamp = Sys.time()) {
     lt <- as.POSIXlt(time_stamp)
     
     year   <- lt$year + 1900
     month  <- lt$mon  + 1
     day    <- lt$mday
-    
-    weekday <- (lt$wday %% 7)
+    # POSIXlt$wday: 0 = Sunday … 6 = Saturday.  Shift to 1–7:
+    weekday <- (lt$wday %% 7) + 1
     
     time_decimal <- lt$hour + lt$min / 60 + lt$sec / 3600
     
@@ -363,5 +364,60 @@ server <- function(input, output, session) {
       weekday       = weekday,
       time_decimal  = time_decimal
     )
+  }
+  
+  
+  load_and_predict_fare <- function() {
+    ## 0.  Preconditions ------------------------------------------------
+    req(rv$trip_duration_sec,         # set after routing
+        rv$path_length_val,
+        rv$start_point_sf,
+        rv$end_point_sf)
+    
+    ## 1.  Load model (and scaler if available) -------------------------
+    model_path <- "model/fare_xgb.model"
+    if (!file.exists(model_path)) {
+      warning("XGBoost model file not found: ", model_path)
+      rv$predicted_fare <- NA_real_
+      return(NA_real_)
+    }
+    xgb_model <- xgboost::xgb.load(model_path)
+    
+    # optional scaling object
+    scaler_path <- "scale_params.rds"
+    scaler <- if (file.exists(scaler_path)) readRDS(scaler_path) else NULL
+    
+    ## 2.  Assemble feature row ----------------------------------------
+    dt  <- get_datetime_features()                # year, month, day, weekday, time_decimal
+    
+    start_xy <- sf::st_coordinates(rv$start_point_sf)
+    end_xy   <- sf::st_coordinates(rv$end_point_sf)
+    
+    new_row <- data.frame(
+      trip_seconds                = rv$trip_duration_sec,
+      trip_miles                  = rv$path_length_val,
+      year                        = dt$year,
+      month                       = dt$month,
+      weekday                     = dt$weekday,
+      day                         = dt$day,
+      time_decimal                = dt$time_decimal,
+      pickup_centroid_latitude    = start_xy[1, 2],
+      pickup_centroid_longitude   = start_xy[1, 1],
+      dropoff_centroid_latitude   = end_xy[1, 2],
+      dropoff_centroid_longitude  = end_xy[1, 1]
+    )
+    
+    ## 3.  Apply same preprocessing as training ------------------------
+    if (!is.null(scaler)) {
+      new_row <- predict(scaler, new_row)
+    }
+    
+    ## 4.  Predict ------------------------------------------------------
+    dmat <- xgboost::xgb.DMatrix(as.matrix(new_row))
+    pred <- as.numeric(predict(xgb_model, dmat))
+    
+    ## 5.  Store & return ----------------------------------------------
+    rv$predicted_fare <- pred
+    return(pred)
   }
 }
